@@ -1,0 +1,4 @@
+PyYAML
+lxml
+ncclient
+prometheus_client
