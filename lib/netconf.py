@@ -1,14 +1,5 @@
 """
-NETCONF Client
-
-Handles all communication with Juniper devices.
-
-Responsibilities
-----------------
-- Connect to NETCONF
-- Disconnect
-- Execute RPCs
-- Always return an lxml root element
+NETCONF client for Juniper SRX devices.
 """
 
 from lxml import etree
@@ -45,7 +36,7 @@ class NetconfClient:
 
     def rpc(self, rpc_name):
         """
-        Execute an RPC and always return an lxml root element.
+        Execute a Junos RPC and return the XML root element.
         """
 
         xml = etree.XML(f"<{rpc_name}/>")
@@ -53,10 +44,8 @@ class NetconfClient:
         reply = self.conn.dispatch(xml)
 
         #
-        # ncclient has changed over the years.
-        # Handle every version we've seen.
+        # Support different ncclient versions
         #
-
         if hasattr(reply, "xml"):
             return etree.fromstring(reply.xml.encode())
 
