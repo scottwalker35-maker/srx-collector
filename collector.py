@@ -1,10 +1,9 @@
 import yaml
 
-from netconf import NetconfClient
-from parser import (
-    get_system_information,
-    get_ha_information,
-)
+from lib.netconf import NetconfClient
+
+from collectors.system import collect_system
+from collectors.ha import collect_ha
 
 
 def load_config():
@@ -15,6 +14,11 @@ def load_config():
 def main():
 
     config = load_config()
+
+    collectors = (
+        collect_system,
+        collect_ha,
+    )
 
     for device in config["devices"]:
 
@@ -31,8 +35,14 @@ def main():
 
         metrics = {}
 
-        metrics["system"] = get_system_information(client.conn)
-        metrics["ha"] = get_ha_information(client.conn)
+        #
+        # Run every collector
+        #
+        for collector in collectors:
+
+            result = collector(client)
+
+            metrics[result["name"]] = result["metrics"]
 
         client.disconnect()
 
