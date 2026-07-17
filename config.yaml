@@ -1,0 +1,6 @@
+devices:
+  - name: VANCBC07-vFW-01
+    host: 192.168.68.98
+    port: 830
+    username: netconf
+    password: your_password
