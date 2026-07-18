@@ -1,0 +1,1731 @@
+# Juniper SRX Prometheus Exporter - LLM Context
+
+Generated: 2026-07-18T21:17:36Z
+
+The live config.yaml file is deliberately excluded.
+Review this output before pasting it into an LLM.
+
+
+================================================================
+FILE: collector.py
+================================================================
+import yaml
+
+from lib.netconf import NetconfClient
+
+from collectors.system import collect_system
+from collectors.ha import collect_ha
+from collectors.sessions import collect_sessions
+from collectors.route_engine import collect_route_engine
+from collectors.interface_statistics import collect_interface_statistics
+from collectors.security_screen import collect_security_screen
+from collectors.security_policy_hit_count import collect_security_policy_hit_count
+
+
+def load_config():
+    """
+    Load the collector configuration.
+    """
+
+    with open("config.yaml", "r", encoding="utf-8") as config_file:
+        return yaml.safe_load(config_file)
+
+
+def print_nested(value, indent=0):
+    """
+    Print nested dictionaries returned by collectors.
+    """
+
+    prefix = " " * indent
+
+    if isinstance(value, dict):
+        for key, child_value in value.items():
+
+            if isinstance(child_value, dict):
+                print(f"{prefix}{key}")
+                print_nested(child_value, indent + 4)
+                continue
+
+            child_value = (
+                ""
+                if child_value is None
+                else str(child_value).strip()
+            )
+
+            print(
+                f"{prefix}{key:35} "
+                f"{child_value}"
+            )
+
+        return
+
+    print(f"{prefix}{value}")
+
+
+def collect_device_metrics(client, device):
+    """
+    Run all collectors for one device.
+
+    Interface collection receives the device-specific list of selected
+    parent interfaces. Selecting a parent includes all logical units
+    beneath that parent.
+    """
+
+    metrics = {}
+
+    standard_collectors = (
+        collect_system,
+        collect_ha,
+        collect_sessions,
+        collect_route_engine,
+    )
+
+    for collector in standard_collectors:
+        result = collector(client)
+        metrics[result["name"]] = result["metrics"]
+
+    security_screen_zones = device.get(
+        "security_screen_zones",
+        [],
+    )
+
+    if security_screen_zones:
+        security_screen_result = collect_security_screen(
+            client=client,
+            zones=security_screen_zones,
+        )
+        metrics[security_screen_result["name"]] = (
+            security_screen_result["metrics"]
+        )
+
+    policy_hit_count_result = collect_security_policy_hit_count(
+        client=client,
+    )
+
+    metrics[policy_hit_count_result["name"]] = (
+        policy_hit_count_result["metrics"]
+    )
+
+    interface_result = collect_interface_statistics(
+        client=client,
+        selected_interfaces=device.get("interfaces", []),
+    )
+
+    metrics[interface_result["name"]] = interface_result["metrics"]
+
+    return metrics
+
+
+def print_metrics(metrics):
+    """
+    Print all collected metrics.
+    """
+
+    print("\nCollected Metrics")
+    print("-----------------")
+
+    for section, values in metrics.items():
+
+        print(f"\n[{section}]")
+
+        if section == "interface_statistics":
+
+            print(
+                f"{'interfaces_collected':35} "
+                f"{len(values)}"
+            )
+
+            for interface_name, interface_values in values.items():
+
+                print(f"\n{interface_name}")
+
+                print_nested(
+                    interface_values,
+                    indent=4,
+                )
+
+            continue
+
+        for key, value in values.items():
+
+            value = (
+                ""
+                if value is None
+                else str(value).strip()
+            )
+
+            print(f"{key:35} {value}")
+
+
+def main():
+    """
+    Main collector entry point.
+    """
+
+    config = load_config()
+
+    for device in config["devices"]:
+
+        print(f"\nConnecting to {device['name']}...")
+
+        client = NetconfClient(
+            host=device["host"],
+            username=device["username"],
+            password="REDACTED",
+            port=device["port"],
+        )
+
+        try:
+            client.connect()
+
+            metrics = collect_device_metrics(
+                client=client,
+                device=device,
+            )
+
+        finally:
+            client.disconnect()
+
+        print_metrics(metrics)
+
+
+if __name__ == "__main__":
+    main()
+
+================================================================
+FILE: exporter.py
+================================================================
+import logging
+import threading
+import time
+
+from prometheus_client import CollectorRegistry
+from prometheus_client import start_http_server
+
+from collector import collect_device_metrics
+from collector import load_config
+from exporters.prometheus import SrxPrometheusCollector
+from lib.netconf import NetconfClient
+
+
+LOGGER = logging.getLogger("srx-exporter")
+
+
+def configure_logging():
+    """
+    Configure exporter logging while suppressing verbose SSH and NETCONF logs.
+    """
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format=(
+            "%(asctime)s %(levelname)s "
+            "%(name)s: %(message)s"
+        ),
+    )
+
+    logging.getLogger("ncclient").setLevel(logging.WARNING)
+    logging.getLogger("paramiko").setLevel(logging.WARNING)
+
+
+def get_device_id(device):
+    """
+    Return the stable exporter identity for a configured device.
+
+    The OAM address is used because it is known before NETCONF collection
+    begins and does not depend on the configured Junos hostname.
+    """
+
+    return str(device["host"])
+
+
+def collect_device(device, prometheus_collector):
+    """
+    Connect to one SRX, run all collectors and update the metric cache.
+    """
+
+    device_id = get_device_id(device)
+    started_at = time.monotonic()
+
+    client = NetconfClient(
+        host=device["host"],
+        username=device["username"],
+        password="REDACTED",
+        port=device.get("port", 830),
+    )
+
+    connected = False
+
+    try:
+        LOGGER.info(
+            "Connecting to SRX at %s:%s",
+            device["host"],
+            device.get("port", 830),
+        )
+
+        client.connect()
+        connected = True
+
+        metrics = collect_device_metrics(
+            client=client,
+            device=device,
+        )
+
+        duration_seconds = time.monotonic() - started_at
+
+        prometheus_collector.update_device(
+            device_name=device_id,
+            metrics=metrics,
+            duration_seconds=duration_seconds,
+        )
+
+        hostname = (
+            metrics.get("system", {}).get("hostname")
+            or "unknown"
+        )
+
+        LOGGER.info(
+            "Collected %s at %s successfully in %.2f seconds",
+            hostname,
+            device["host"],
+            duration_seconds,
+        )
+
+    except Exception:
+        duration_seconds = time.monotonic() - started_at
+
+        prometheus_collector.mark_device_error(
+            device_name=device_id,
+            duration_seconds=duration_seconds,
+        )
+
+        LOGGER.exception(
+            "Collection failed for %s after %.2f seconds",
+            device["host"],
+            duration_seconds,
+        )
+
+    finally:
+        if connected:
+            try:
+                client.disconnect()
+            except Exception:
+                LOGGER.warning(
+                    "Failed to disconnect cleanly from %s",
+                    device["host"],
+                    exc_info=True,
+                )
+
+
+def collection_loop(
+    devices,
+    prometheus_collector,
+    interval_seconds,
+):
+    """
+    Continuously collect all configured SRX devices.
+    """
+
+    while True:
+        cycle_started_at = time.monotonic()
+
+        for device in devices:
+            collect_device(
+                device=device,
+                prometheus_collector=prometheus_collector,
+            )
+
+        cycle_duration = time.monotonic() - cycle_started_at
+
+        sleep_seconds = max(
+            0,
+            interval_seconds - cycle_duration,
+        )
+
+        LOGGER.info(
+            "Collection cycle completed in %.2f seconds; "
+            "sleeping %.2f seconds",
+            cycle_duration,
+            sleep_seconds,
+        )
+
+        time.sleep(sleep_seconds)
+
+
+def main():
+    """
+    Start the SRX Prometheus exporter.
+    """
+
+    configure_logging()
+
+    config = load_config()
+
+    exporter_config = config.get("exporter", {})
+
+    listen_address = exporter_config.get(
+        "listen_address",
+        "0.0.0.0",
+    )
+
+    listen_port = int(
+        exporter_config.get(
+            "listen_port",
+            9105,
+        )
+    )
+
+    interval_seconds = int(
+        exporter_config.get(
+            "collection_interval_seconds",
+            30,
+        )
+    )
+
+    if interval_seconds < 1:
+        raise ValueError(
+            "collection_interval_seconds must be at least 1"
+        )
+
+    devices = config.get("devices", [])
+
+    if not devices:
+        raise RuntimeError(
+            "No devices are configured in config.yaml"
+        )
+
+    for device in devices:
+        if "host" not in device:
+            raise ValueError(
+                "Every device requires a host value"
+            )
+
+    registry = CollectorRegistry()
+
+    prometheus_collector = SrxPrometheusCollector()
+    registry.register(prometheus_collector)
+
+    collection_thread = threading.Thread(
+        target=collection_loop,
+        kwargs={
+            "devices": devices,
+            "prometheus_collector": prometheus_collector,
+            "interval_seconds": interval_seconds,
+        },
+        daemon=True,
+        name="srx-collection-loop",
+    )
+
+    collection_thread.start()
+
+    start_http_server(
+        port=listen_port,
+        addr=listen_address,
+        registry=registry,
+    )
+
+    LOGGER.info(
+        "Prometheus exporter listening on http://%s:%s/metrics",
+        listen_address,
+        listen_port,
+    )
+
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        LOGGER.info("Exporter stopped by user.")
+
+
+if __name__ == "__main__":
+    main()
+
+================================================================
+FILE: exporters/prometheus.py
+================================================================
+import math
+import re
+import threading
+import time
+from numbers import Number
+
+from prometheus_client.core import GaugeMetricFamily
+
+
+_METRIC_NAME_PATTERN = re.compile(r"[^a-zA-Z0-9_:]")
+
+
+def _sanitize_metric_name(value):
+    """
+    Convert a collector key into a valid Prometheus metric-name component.
+    """
+
+    value = str(value).strip().lower()
+    value = _METRIC_NAME_PATTERN.sub("_", value)
+    value = re.sub(r"_+", "_", value)
+    return value.strip("_")
+
+
+def _numeric_value(value):
+    """
+    Convert supported values to a finite float.
+
+    Strings such as timestamps, interface states, versions and descriptions
+    are intentionally ignored by the generic numeric exporter.
+
+    Collectors requiring string labels, such as system information, are
+    handled separately.
+    """
+
+    if value is None or isinstance(value, bool):
+        return None
+
+    if isinstance(value, Number):
+        number = float(value)
+
+    elif isinstance(value, str):
+        value = value.strip()
+
+        if not value:
+            return None
+
+        try:
+            number = float(value)
+        except ValueError:
+            return None
+
+    else:
+        return None
+
+    if not math.isfinite(number):
+        return None
+
+    return number
+
+
+def _label_value(value):
+    """
+    Convert a collector value into a safe Prometheus label value.
+    """
+
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+def _flatten_numeric_metrics(value, path=()):
+    """
+    Recursively flatten numeric values from nested collector dictionaries.
+
+    Example:
+
+        {
+            "traffic": {
+                "rx_bytes_total": 123
+            }
+        }
+
+    becomes:
+
+        (("traffic", "rx_bytes_total"), 123)
+    """
+
+    if isinstance(value, dict):
+        for key, child_value in value.items():
+            yield from _flatten_numeric_metrics(
+                child_value,
+                path + (_sanitize_metric_name(key),),
+            )
+
+        return
+
+    number = _numeric_value(value)
+
+    if number is not None:
+        yield path, number
+
+
+class SrxPrometheusCollector:
+    """
+    Thread-safe Prometheus collector backed by the latest NETCONF results.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._devices = {}
+
+    def update_device(
+        self,
+        device_name,
+        metrics,
+        duration_seconds,
+        collected_at=None,
+    ):
+        """
+        Store a successful collection for one SRX device.
+        """
+
+        if collected_at is None:
+            collected_at = time.time()
+
+        with self._lock:
+            previous = self._devices.get(device_name, {})
+
+            self._devices[device_name] = {
+                "metrics": metrics,
+                "up": 1,
+                "duration_seconds": float(duration_seconds),
+                "last_success_timestamp_seconds": float(collected_at),
+                "collection_errors_total": previous.get(
+                    "collection_errors_total",
+                    0,
+                ),
+            }
+
+    def mark_device_error(self, device_name, duration_seconds):
+        """
+        Record a failed collection while retaining the last good metrics.
+        """
+
+        with self._lock:
+            previous = self._devices.get(device_name, {})
+
+            self._devices[device_name] = {
+                "metrics": previous.get("metrics", {}),
+                "up": 0,
+                "duration_seconds": float(duration_seconds),
+                "last_success_timestamp_seconds": previous.get(
+                    "last_success_timestamp_seconds",
+                    0,
+                ),
+                "collection_errors_total": previous.get(
+                    "collection_errors_total",
+                    0,
+                ) + 1,
+            }
+
+    def _snapshot(self):
+        """
+        Return a shallow snapshot safe for Prometheus collection.
+        """
+
+        with self._lock:
+            return {
+                device_name: {
+                    "metrics": values.get("metrics", {}),
+                    "up": values.get("up", 0),
+                    "duration_seconds": values.get(
+                        "duration_seconds",
+                        0,
+                    ),
+                    "last_success_timestamp_seconds": values.get(
+                        "last_success_timestamp_seconds",
+                        0,
+                    ),
+                    "collection_errors_total": values.get(
+                        "collection_errors_total",
+                        0,
+                    ),
+                }
+                for device_name, values in self._devices.items()
+            }
+
+    def collect(self):
+        """
+        Yield Prometheus metric families.
+        """
+
+        snapshot = self._snapshot()
+
+        exporter_up = GaugeMetricFamily(
+            "srx_exporter_up",
+            "Whether the most recent NETCONF collection succeeded.",
+            labels=["device"],
+        )
+
+        collection_duration = GaugeMetricFamily(
+            "srx_exporter_collection_duration_seconds",
+            "Duration of the most recent NETCONF collection.",
+            labels=["device"],
+        )
+
+        last_success = GaugeMetricFamily(
+            "srx_exporter_last_success_timestamp_seconds",
+            "Unix timestamp of the most recent successful collection.",
+            labels=["device"],
+        )
+
+        collection_errors = GaugeMetricFamily(
+            "srx_exporter_collection_errors_total",
+            "Total NETCONF collection failures since exporter startup.",
+            labels=["device"],
+        )
+
+        for device_name, device_data in snapshot.items():
+            labels = [device_name]
+
+            exporter_up.add_metric(
+                labels,
+                device_data["up"],
+            )
+
+            collection_duration.add_metric(
+                labels,
+                device_data["duration_seconds"],
+            )
+
+            last_success.add_metric(
+                labels,
+                device_data["last_success_timestamp_seconds"],
+            )
+
+            collection_errors.add_metric(
+                labels,
+                device_data["collection_errors_total"],
+            )
+
+        yield exporter_up
+        yield collection_duration
+        yield last_success
+        yield collection_errors
+
+        metric_samples = {}
+
+        for device_name, device_data in snapshot.items():
+            metrics = device_data["metrics"]
+
+            for section_name, section_values in metrics.items():
+
+                if section_name == "system":
+                    self._collect_system_info(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        system_values=section_values,
+                    )
+                    continue
+
+                if section_name == "ha":
+                    self._collect_ha_info(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        ha_values=section_values,
+                    )
+                    continue
+
+                if section_name == "security_policy_hit_count":
+                    self._collect_security_policy_hit_count_samples(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        policies=section_values,
+                    )
+                    continue
+
+                if section_name == "security_screen":
+                    self._collect_security_screen_samples(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        zones=section_values,
+                    )
+                    continue
+
+                if section_name == "interface_statistics":
+                    self._collect_interface_samples(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        interfaces=section_values,
+                    )
+                    continue
+
+                self._collect_section_samples(
+                    metric_samples=metric_samples,
+                    device_name=device_name,
+                    section_name=section_name,
+                    section_values=section_values,
+                )
+
+        for metric_name in sorted(metric_samples):
+            metric_data = metric_samples[metric_name]
+
+            family = GaugeMetricFamily(
+                metric_name,
+                metric_data["description"],
+                labels=metric_data["label_names"],
+            )
+
+            for sample in metric_data["samples"]:
+                family.add_metric(
+                    sample["label_values"],
+                    sample["value"],
+                )
+
+            yield family
+
+    def _collect_ha_info(
+        self,
+        metric_samples,
+        device_name,
+        ha_values,
+    ):
+        """
+        Export MNHA state as both labels and a numeric role value.
+
+        Role-state values:
+            2 = ACTIVE
+            1 = BACKUP or STANDBY
+            0 = DOWN, FAILED, OFFLINE or unknown
+        """
+
+        info_metric_name = "srx_ha_info"
+
+        if info_metric_name not in metric_samples:
+            metric_samples[info_metric_name] = {
+                "description": (
+                    "Juniper SRX Multi-Node High Availability information."
+                ),
+                "label_names": [
+                    "device",
+                    "node_status",
+                    "role",
+                    "peer_role",
+                    "health",
+                    "readiness",
+                    "peer_bfd",
+                ],
+                "samples": [],
+            }
+
+        metric_samples[info_metric_name]["samples"].append(
+            {
+                "label_values": [
+                    device_name,
+                    _label_value(ha_values.get("node_status")),
+                    _label_value(ha_values.get("role")),
+                    _label_value(ha_values.get("peer_role")),
+                    _label_value(ha_values.get("health")),
+                    _label_value(ha_values.get("readiness")),
+                    _label_value(ha_values.get("peer_bfd")),
+                ],
+                "value": 1,
+            }
+        )
+
+        role = _label_value(
+            ha_values.get("role")
+        ).upper()
+
+        node_status = _label_value(
+            ha_values.get("node_status")
+        ).upper()
+
+        if node_status not in {"ONLINE", "UP"}:
+            role_state = 0
+        elif role == "ACTIVE":
+            role_state = 2
+        elif role in {"BACKUP", "STANDBY"}:
+            role_state = 1
+        else:
+            role_state = 0
+
+        role_metric_name = "srx_ha_role_state"
+
+        if role_metric_name not in metric_samples:
+            metric_samples[role_metric_name] = {
+                "description": (
+                    "MNHA role state: 2 active, 1 backup or standby, "
+                    "0 down or unknown."
+                ),
+                "label_names": ["device"],
+                "samples": [],
+            }
+
+        metric_samples[role_metric_name]["samples"].append(
+            {
+                "label_values": [device_name],
+                "value": role_state,
+            }
+        )
+
+    def _collect_system_info(
+        self,
+        metric_samples,
+        device_name,
+        system_values,
+    ):
+        """
+        Export static Juniper system information as Prometheus labels.
+
+        Prometheus does not store arbitrary string metric values. Static
+        identity information is therefore exported as labels on a gauge
+        whose value is always 1.
+        """
+
+        metric_name = "srx_system_info"
+
+        if metric_name not in metric_samples:
+            metric_samples[metric_name] = {
+                "description": (
+                    "Static system information reported by the Juniper SRX."
+                ),
+                "label_names": [
+                    "device",
+                    "hostname",
+                    "model",
+                    "family",
+                    "junos_version",
+                    "serial_number",
+                ],
+                "samples": [],
+            }
+
+        metric_samples[metric_name]["samples"].append(
+            {
+                "label_values": [
+                    _label_value(device_name),
+                    _label_value(system_values.get("hostname")),
+                    _label_value(system_values.get("model")),
+                    _label_value(system_values.get("family")),
+                    _label_value(system_values.get("version")),
+                    _label_value(system_values.get("serial")),
+                ],
+                "value": 1,
+            }
+        )
+
+    def _collect_security_screen_samples(
+        self,
+        metric_samples,
+        device_name,
+        zones,
+    ):
+        """Export Screen counters with device and zone labels."""
+
+        for zone_name, zone_values in zones.items():
+            for path, value in _flatten_numeric_metrics(zone_values):
+                if not path:
+                    continue
+                metric_name = "srx_screen_{}".format("_".join(path))
+                self._add_sample(
+                    metric_samples=metric_samples,
+                    metric_name=metric_name,
+                    label_names=["device", "zone"],
+                    label_values=[device_name, zone_name],
+                    value=value,
+                )
+
+    def _collect_security_policy_hit_count_samples(
+        self,
+        metric_samples,
+        device_name,
+        policies,
+    ):
+        """Export one dynamically labelled sample per security policy."""
+
+        for policy_values in policies.values():
+            self._add_sample(
+                metric_samples=metric_samples,
+                metric_name="srx_security_policy_hit_count_total",
+                label_names=[
+                    "device",
+                    "logical_system",
+                    "from_zone",
+                    "to_zone",
+                    "policy",
+                    "action",
+                ],
+                label_values=[
+                    device_name,
+                    policy_values.get("logical_system", "root-logical-system"),
+                    policy_values.get("from_zone", ""),
+                    policy_values.get("to_zone", ""),
+                    policy_values.get("policy", ""),
+                    policy_values.get("action", ""),
+                ],
+                value=policy_values.get("hit_count_total", 0),
+            )
+
+    def _collect_section_samples(
+        self,
+        metric_samples,
+        device_name,
+        section_name,
+        section_values,
+    ):
+        """
+        Translate a non-interface collector section.
+        """
+
+        section_component = _sanitize_metric_name(section_name)
+
+        for path, value in _flatten_numeric_metrics(section_values):
+            if not path:
+                continue
+
+            metric_name = "srx_{}_{}".format(
+                section_component,
+                "_".join(path),
+            )
+
+            self._add_sample(
+                metric_samples=metric_samples,
+                metric_name=metric_name,
+                label_names=["device"],
+                label_values=[device_name],
+                value=value,
+            )
+
+    def _collect_interface_samples(
+        self,
+        metric_samples,
+        device_name,
+        interfaces,
+    ):
+        """
+        Translate interface metrics.
+
+        Each interface is exported with device and interface labels.
+        """
+
+        for interface_name, interface_values in interfaces.items():
+
+            for path, value in _flatten_numeric_metrics(interface_values):
+                if not path:
+                    continue
+
+                metric_name = "srx_interface_{}".format(
+                    "_".join(path)
+                )
+
+                self._add_sample(
+                    metric_samples=metric_samples,
+                    metric_name=metric_name,
+                    label_names=["device", "interface"],
+                    label_values=[
+                        device_name,
+                        interface_name,
+                    ],
+                    value=value,
+                )
+
+    @staticmethod
+    def _add_sample(
+        metric_samples,
+        metric_name,
+        label_names,
+        label_values,
+        value,
+    ):
+        """
+        Add a sample to its metric family.
+        """
+
+        if metric_name not in metric_samples:
+            metric_samples[metric_name] = {
+                "description": (
+                    "Metric collected from a Juniper SRX using NETCONF."
+                ),
+                "label_names": label_names,
+                "samples": [],
+            }
+
+        metric_samples[metric_name]["samples"].append(
+            {
+                "label_values": label_values,
+                "value": value,
+            }
+        )
+
+================================================================
+FILE: lib/netconf.py
+================================================================
+"""
+NETCONF client for Juniper SRX devices.
+"""
+
+from lxml import etree
+from ncclient import manager
+
+
+class NetconfClient:
+
+    def __init__(self, host, port, username, password):
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = "REDACTED"
+        self.conn = None
+
+    def connect(self):
+
+        self.conn = manager.connect(
+            host=self.host,
+            port=self.port,
+            username=self.username,
+            password="REDACTED",
+            hostkey_verify=False,
+            device_params={"name": "junos"},
+            allow_agent=False,
+            look_for_keys=False,
+            timeout=30,
+        )
+
+    def disconnect(self):
+
+        if self.conn:
+            self.conn.close_session()
+
+    def rpc(self, rpc_name):
+        """
+        Execute a Junos RPC and return the XML root element.
+        """
+
+        xml = etree.XML(f"<{rpc_name}/>")
+
+        reply = self.conn.dispatch(xml)
+
+        #
+        # Support different ncclient versions
+        #
+        if hasattr(reply, "xml"):
+            return etree.fromstring(reply.xml.encode())
+
+        if hasattr(reply, "data_xml"):
+            return etree.fromstring(reply.data_xml.encode())
+
+        if hasattr(reply, "_NCElement__doc"):
+            return reply._NCElement__doc.getroot()
+
+        raise RuntimeError(
+            f"Unsupported ncclient reply type: {type(reply)}"
+        )
+
+================================================================
+FILE: collectors/security_screen.py
+================================================================
+"""
+Collector: Security Screen Statistics
+
+CLI:
+    show security screen statistics zone <zone>
+
+RPC:
+    get-ids-statistics
+"""
+
+from lxml import etree
+
+
+_XML_TO_METRIC = {
+    "ids-statistics-icmp-flood": "icmp_flood_total",
+    "ids-statistics-udp-flood": "udp_flood_total",
+    "ids-statistics-winnuke": "tcp_winnuke_total",
+    "ids-statistics-tcp-port-scan": "tcp_port_scan_total",
+    "ids-statistics-udp-port-scan": "udp_port_scan_total",
+    "ids-statistics-address-sweep": "icmp_address_sweep_total",
+    "ids-statistics-tcp-sweep": "tcp_sweep_total",
+    "ids-statistics-udp-sweep": "udp_sweep_total",
+    "ids-statistics-tear-drop": "ip_tear_drop_total",
+    "ids-statistics-syn-flood": "tcp_syn_flood_total",
+    "ids-statistics-syn-flood-src": "tcp_syn_flood_source_total",
+    "ids-statistics-syn-flood-dst": "tcp_syn_flood_destination_total",
+    "ids-statistics-ip-spoofing": "ip_spoofing_total",
+    "ids-statistics-ping-of-death": "icmp_ping_of_death_total",
+    "ids-statistics-ip-option-src-route": "ip_source_route_option_total",
+    "ids-statistics-land": "tcp_land_total",
+    "ids-statistics-syn-fragment": "tcp_syn_fragment_total",
+    "ids-statistics-tcp-no-flag": "tcp_no_flag_total",
+    "ids-statistics-unknown-protocol": "ip_unknown_protocol_total",
+    "ids-statistics-ip-option-bad": "ip_bad_options_total",
+    "ids-statistics-ip-option-record-route": "ip_record_route_option_total",
+    "ids-statistics-ip-option-timestamp": "ip_timestamp_option_total",
+    "ids-statistics-ip-option-security": "ip_security_option_total",
+    "ids-statistics-ip-option-loose-src-route": "ip_loose_source_route_option_total",
+    "ids-statistics-ip-option-strict-src-route": "ip_strict_source_route_option_total",
+    "ids-statistics-ip-option-stream": "ip_stream_option_total",
+    "ids-statistics-icmp-fragment": "icmp_fragment_total",
+    "ids-statistics-icmp-large-pkt": "icmp_large_packet_total",
+    "ids-statistics-syn-fin": "tcp_syn_fin_total",
+    "ids-statistics-fin-no-ack": "tcp_fin_no_ack_total",
+    "ids-statistics-src-session-limit": "source_session_limit_total",
+    "ids-statistics-syn-ack-ack-proxy": "tcp_syn_ack_ack_proxy_total",
+    "ids-statistics-block-fragment": "ip_block_fragment_total",
+    "ids-statistics-dst-session-limit": "destination_session_limit_total",
+    "ids-statistics-ipv6-ext-header": "ipv6_extension_header_total",
+    "ids-statistics-ipv6-ext-hbyh-option": "ipv6_extension_hop_by_hop_option_total",
+    "ids-statistics-ipv6-ext-dst-option": "ipv6_extension_destination_option_total",
+    "ids-statistics-ipv6-ext-header-limit": "ipv6_extension_header_limit_total",
+    "ids-statistics-ipv6-malformed-header": "ipv6_malformed_header_total",
+    "ids-statistics-icmpv6-malformed-packet": "icmpv6_malformed_packet_total",
+    "ids-statistics-ip-tunnel-summary": "ip_tunnel_summary_total",
+}
+
+
+def _reply_root(reply):
+    if hasattr(reply, "xml"):
+        return etree.fromstring(reply.xml.encode())
+    if hasattr(reply, "data_xml"):
+        return etree.fromstring(reply.data_xml.encode())
+    if hasattr(reply, "_NCElement__doc"):
+        return reply._NCElement__doc.getroot()
+    raise RuntimeError(f"Unsupported ncclient reply type: {type(reply)}")
+
+
+def _normalize_zones(zones):
+    normalized = []
+    for zone in zones or []:
+        zone = str(zone).strip()
+        if zone and zone not in normalized:
+            normalized.append(zone)
+    return normalized
+
+
+def _integer(value):
+    if value is None:
+        return None
+    value = str(value).strip().replace(",", "")
+    if value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _collect_zone(client, zone):
+    rpc = etree.Element("get-ids-statistics")
+    etree.SubElement(rpc, "zone").text = zone
+    root = _reply_root(client.conn.dispatch(rpc))
+    statistics = root.find(".//ids-statistics")
+    if statistics is None:
+        return {}
+
+    metrics = {}
+    for xml_name, metric_name in _XML_TO_METRIC.items():
+        value = _integer(statistics.findtext(xml_name))
+        if value is not None:
+            metrics[metric_name] = value
+    return metrics
+
+
+def collect_security_screen(client, zones=None):
+    metrics = {}
+    for zone in _normalize_zones(zones):
+        metrics[zone] = _collect_zone(client=client, zone=zone)
+    return {"name": "security_screen", "metrics": metrics}
+
+================================================================
+FILE: collectors/security_policy_hit_count.py
+================================================================
+"""
+Collector: Security Policy Hit Counts
+
+CLI:
+    show security policies hit-count
+
+RPC:
+    get-security-policies-hit-count
+
+Every policy returned by Junos is collected dynamically. Newly created
+policies appear automatically on the next successful collection cycle.
+"""
+
+from lxml import etree
+
+
+def _reply_root(reply):
+    if hasattr(reply, "xml"):
+        return etree.fromstring(reply.xml.encode())
+    if hasattr(reply, "data_xml"):
+        return etree.fromstring(reply.data_xml.encode())
+    if hasattr(reply, "_NCElement__doc"):
+        return reply._NCElement__doc.getroot()
+    raise RuntimeError(f"Unsupported ncclient reply type: {type(reply)}")
+
+
+def _text(element, path, default=""):
+    value = element.findtext(path)
+    return default if value is None else str(value).strip()
+
+
+def _integer(value):
+    value = str(value or "").strip().replace(",", "")
+    if value == "":
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def collect_security_policy_hit_count(client):
+    rpc = etree.Element("get-security-policies-hit-count")
+    root = _reply_root(client.conn.dispatch(rpc))
+
+    logical_system = (
+        root.findtext(".//logical-system-name")
+        or "root-logical-system"
+    ).strip()
+
+    policies = {}
+
+    for entry in root.findall(".//policy-hit-count-entry"):
+        policy_name = _text(entry, "policy-hit-count-policy-name")
+        from_zone = _text(entry, "policy-hit-count-from-zone")
+        to_zone = _text(entry, "policy-hit-count-to-zone")
+        action = _text(entry, "policy-hit-count-action")
+        index = _integer(_text(entry, "policy-hit-count-index", "0"))
+        hit_count = _integer(_text(entry, "policy-hit-count-count", "0"))
+
+        entry_key = f"{logical_system}|{from_zone}|{to_zone}|{policy_name}"
+        policies[entry_key] = {
+            "logical_system": logical_system,
+            "from_zone": from_zone,
+            "to_zone": to_zone,
+            "policy": policy_name,
+            "action": action,
+            "index": index,
+            "hit_count_total": hit_count,
+        }
+
+    return {
+        "name": "security_policy_hit_count",
+        "metrics": policies,
+    }
+
+================================================================
+FILE: config.example.yaml
+================================================================
+exporter:
+  listen_address: 0.0.0.0
+  listen_port: 9105
+  collection_interval_seconds: 30
+devices:
+- name: R3KL4W-vFW-01
+  host: 192.168.68.98
+  port: 830
+  username: netconf
+  password: REDACTED
+  interfaces:
+  - ge-0/0/0
+  - ge-0/0/1
+  - fxp0
+  - st0
+  security_screen_zones:
+  - untrust
+- name: R3KL4W-vFW-02
+  host: 192.168.68.95
+  port: 830
+  username: netconf
+  password: REDACTED
+  interfaces:
+  - ge-0/0/0
+  - ge-0/0/1
+  - fxp0
+  - st0
+  security_screen_zones:
+  - untrust
+
+================================================================
+FILE: README.md
+================================================================
+# Juniper SRX NETCONF Prometheus Exporter
+
+A modular Python exporter that collects operational data from Juniper SRX and
+vSRX firewalls through NETCONF and exposes the latest values in Prometheus
+format.
+
+The exporter is designed for SRX monitoring in standalone, virtual, and
+Multi-Node High Availability deployments. Grafana, Alertmanager, or any other
+Prometheus-compatible consumer may use the exported metrics, but dashboard
+implementation is outside this repository's core scope.
+
+## Current collectors
+
+- System information
+- Multi-Node High Availability status
+- Security flow session summary
+- Routing Engine statistics
+- Physical and logical interface statistics
+- Security Screen IDS counters
+- Security policy hit counters
+
+The Security Screen collector supports a configurable list of zones.
+
+The security policy hit-count collector discovers every policy returned by
+Junos. Adding, deleting, or renaming an SRX policy does not require a Python
+code change.
+
+## Project layout
+
+```text
+srx-collector/
+├── collector.py
+├── exporter.py
+├── config.yaml
+├── config.example.yaml
+├── requirements.txt
+├── AI_COLLECTOR_INSTRUCTIONS.md
+├── collectors/
+│   ├── system.py
+│   ├── ha.py
+│   ├── sessions.py
+│   ├── route_engine.py
+│   ├── interface_statistics.py
+│   ├── security_screen.py
+│   └── security_policy_hit_count.py
+├── exporters/
+│   └── prometheus.py
+├── lib/
+│   └── netconf.py
+├── docs/
+│   ├── architecture.md
+│   ├── collectors.md
+│   └── metrics.md
+└── scripts/
+    └── export_ai_collector_context.sh
+```
+
+## Requirements
+
+- Linux
+- Python 3.10 or newer
+- NETCONF over SSH enabled on the SRX
+- TCP port 830 reachable from the exporter host
+- A Junos account allowed to execute the required operational RPCs
+
+Basic Junos configuration:
+
+```text
+set system services netconf ssh
+```
+
+## Installation
+
+```bash
+cd ~/srx-collector
+
+python3 -m venv venv
+source venv/bin/activate
+
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+cp config.example.yaml config.yaml
+nano config.yaml
+chmod 600 config.yaml
+```
+
+Never commit the live `config.yaml` file.
+
+## Configuration example
+
+```yaml
+exporter:
+  listen_address: 0.0.0.0
+  listen_port: 9105
+  collection_interval_seconds: 30
+
+devices:
+  - name: R3KL4W-vFW-01
+    host: 192.0.2.10
+    port: 830
+    username: netconf-user
+    password: REDACTED
+
+    interfaces:
+      - ge-0/0/0
+      - ge-0/0/1
+      - fxp0
+      - st0
+
+    security_screen_zones:
+      - untrust
+```
+
+Selecting a parent interface includes its logical units.
+
+Every zone listed under `security_screen_zones` is queried independently.
+
+Security policies do not need to be listed. They are dynamically discovered
+through:
+
+```xml
+<get-security-policies-hit-count/>
+```
+
+## Run locally
+
+Command-line collector:
+
+```bash
+source venv/bin/activate
+python collector.py
+```
+
+Prometheus exporter:
+
+```bash
+source venv/bin/activate
+python exporter.py
+```
+
+Verify the endpoint:
+
+```bash
+curl -s http://127.0.0.1:9105/metrics |
+grep '^srx_'
+```
+
+Default endpoint:
+
+```text
+http://0.0.0.0:9105/metrics
+```
+
+## Prometheus scrape configuration
+
+```yaml
+scrape_configs:
+  - job_name: juniper_netconf
+    static_configs:
+      - targets:
+          - 127.0.0.1:9105
+```
+
+## New collector workflow
+
+The repository includes an LLM-specific implementation guide:
+
+```text
+AI_COLLECTOR_INSTRUCTIONS.md
+```
+
+It is intended to be pasted into ChatGPT or another LLM together with:
+
+1. the Junos `| display xml` output;
+2. the Junos `| display xml rpc` output;
+3. the generated repository context.
+
+Generate the repository context with:
+
+```bash
+./scripts/export_ai_collector_context.sh
+```
+
+See [Collectors](docs/collectors.md) for the human-readable collector
+inventory and [Metrics](docs/metrics.md) for exported metric conventions.
+
+================================================================
+FILE: docs/collectors.md
+================================================================
+# Collectors
+
+## System
+
+File:
+
+```text
+collectors/system.py
+```
+
+Collects device identity and system information.
+
+## High Availability
+
+File:
+
+```text
+collectors/ha.py
+```
+
+Collects Juniper Multi-Node High Availability state.
+
+## Sessions
+
+File:
+
+```text
+collectors/sessions.py
+```
+
+Collects security flow session summary values.
+
+## Routing Engine
+
+File:
+
+```text
+collectors/route_engine.py
+```
+
+Collects Routing Engine CPU, memory, load, reboot, and uptime information.
+
+## Interface statistics
+
+File:
+
+```text
+collectors/interface_statistics.py
+```
+
+Collects configured physical interfaces and their logical units.
+
+Configured parent interfaces are supplied through `config.yaml`.
+
+## Security Screen statistics
+
+File:
+
+```text
+collectors/security_screen.py
+```
+
+CLI:
+
+```text
+show security screen statistics zone <zone>
+```
+
+RPC:
+
+```xml
+<get-ids-statistics>
+  <zone>untrust</zone>
+</get-ids-statistics>
+```
+
+Zones are supplied through `security_screen_zones` in `config.yaml`.
+
+The collector exports the fixed set of Screen counters returned by Junos for
+each configured zone.
+
+## Security policy hit counts
+
+File:
+
+```text
+collectors/security_policy_hit_count.py
+```
+
+CLI:
+
+```text
+show security policies hit-count
+```
+
+RPC:
+
+```xml
+<get-security-policies-hit-count/>
+```
+
+Every policy returned by Junos is discovered automatically.
+
+Policy names, source zones, destination zones, logical systems, and actions
+are not hardcoded.
+
+A newly configured policy appears on the next successful collection cycle.
+
+================================================================
+FILE: docs/metrics.md
+================================================================
+# Metrics
+
+All device metrics include:
+
+```text
+device="<NETCONF host>"
+```
+
+## Exporter health
+
+```text
+srx_exporter_up
+srx_exporter_collection_duration_seconds
+srx_exporter_last_success_timestamp_seconds
+srx_exporter_collection_errors_total
+```
+
+## Security Screen
+
+Security Screen values are cumulative Junos counters.
+
+Examples:
+
+```text
+srx_screen_icmp_flood_total{
+  device="192.0.2.10",
+  zone="untrust"
+}
+```
+
+```text
+srx_screen_tcp_syn_flood_total{
+  device="192.0.2.10",
+  zone="untrust"
+}
+```
+
+```text
+srx_screen_tcp_port_scan_total{
+  device="192.0.2.10",
+  zone="untrust"
+}
+```
+
+Use Prometheus `increase()` or `rate()` to calculate activity over time.
+Counter values may reset after a reboot, failover, clear command, or process
+restart.
+
+## Security policy hit counts
+
+Metric:
+
+```text
+srx_security_policy_hit_count_total
+```
+
+Labels:
+
+```text
+device
+logical_system
+from_zone
+to_zone
+policy
+action
+```
+
+Example:
+
+```text
+srx_security_policy_hit_count_total{
+  device="192.0.2.10",
+  logical_system="root-logical-system",
+  from_zone="trust",
+  to_zone="untrust",
+  policy="Internet",
+  action="Permit"
+} 650
+```
+
+The Junos policy index is intentionally not exported as object identity.
+Indexes can change when policy order changes.
+
+The metric family is dynamically expandable: any policy returned by Junos
+automatically becomes another labelled sample.
+
+## Naming rules
+
+Cumulative counters end in:
+
+```text
+_total
+```
+
+Instantaneous values and states do not use `_total`.
+
+Stable configured object identity belongs in labels.
+
+Unbounded traffic-derived identity, such as arbitrary source addresses or
+session IDs, must not be used as labels.
