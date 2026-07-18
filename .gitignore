@@ -36,3 +36,4 @@ ai-collector-context.txt
 backups/
 update_*_docs*.sh
 update_*_guide*.sh
+ai-new-collector-prompt.txt

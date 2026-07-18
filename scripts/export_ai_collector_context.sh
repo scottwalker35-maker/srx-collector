@@ -42,12 +42,12 @@ files=(
 : > "$OUTPUT_FILE"
 
 {
-    echo "# Juniper SRX Prometheus Exporter - LLM Repository Context"
+    echo "# Juniper SRX Prometheus Exporter - Optional LLM Source Context"
     echo
     echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo
-    echo "Purpose:"
-    echo "Provide only the source files needed to add a collector."
+    echo "Use this only when AI_COLLECTOR_INSTRUCTIONS.md and"
+    echo "REPOSITORY_MAP.md are insufficient."
     echo
     echo "The live config.yaml file is deliberately excluded."
     echo "Review this output before sharing it with an LLM."
@@ -70,13 +70,13 @@ done
 
 chmod 600 "$OUTPUT_FILE"
 
-echo "Created: $OUTPUT_FILE"
+echo "Created optional repository context:"
+echo "  $OUTPUT_FILE"
 echo
-echo "Review it before sharing:"
-echo "  less \"$OUTPUT_FILE\""
+echo "This file is not required for a normal collector request."
 echo
-echo "Paste these into the LLM in this order:"
-echo "  1. AI_COLLECTOR_INSTRUCTIONS.md"
-echo "  2. $OUTPUT_FILE"
-echo "  3. Junos '| display xml' output"
-echo "  4. Junos '| display xml rpc' output"
+echo "Only paste it when the LLM identifies a specific need for repository"
+echo "source context."
+echo
+echo "To display the file:"
+echo "  cat \"$OUTPUT_FILE\""

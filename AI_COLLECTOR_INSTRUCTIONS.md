@@ -132,28 +132,83 @@ relevant XML response structure in its module docstring.
 The collector should be understandable and testable from one Junos
 operational command plus its `display xml` and `display xml rpc` output.
 
-## Mandatory input
 
-The operator will supply both:
+## Required input
 
-```text
-show <command> | display xml
+For a normal collector request, the operator should provide:
+
+1. this instruction file;
+2. `REPOSITORY_MAP.md`;
+3. the complete output of:
+
+   ```text
+   show <command> | display xml
+   ```
+
+4. the complete output of:
+
+   ```text
+   show <command> | display xml rpc
+   ```
+
+The full generated repository context is optional.
+
+Do not stop merely because `ai-collector-context.txt` was not supplied.
+
+Use the repository map and existing collector conventions when the XML and RPC
+are complete enough.
+
+## When repository source is actually needed
+
+Ask for additional source only when a specific implementation detail cannot be
+determined safely.
+
+Examples:
+
+- collector registration point is unclear;
+- collector return structure is unknown;
+- shared XML normalization helpers cannot be inferred;
+- service restart name is unknown;
+- documentation filenames differ from the repository map;
+- exporter changes are genuinely necessary.
+
+Ask for the smallest missing file first, for example:
+
+```bash
+sed -n '1,240p' collector.py
 ```
 
-and:
+or:
 
-```text
-show <command> | display xml rpc
+```bash
+sed -n '1,240p' collectors/security_policy_hit_count.py
 ```
 
-Use the RPC output to build the request.
+Do not request the full repository context unless specific files are
+insufficient.
 
-Use the XML output to build the parser.
+If full context is still required, instruct the operator to run:
 
-Never parse the formatted CLI table.
+```bash
+./scripts/export_ai_collector_context.sh
+cat ai-collector-context.txt
+```
 
-If the XML or repository context is incomplete, stop and ask for the missing
-content rather than guessing.
+The operator must paste the file contents, not the short command status.
+
+## Default decision rule
+
+If the operator supplied:
+
+- complete Junos XML output;
+- complete Junos XML RPC output;
+- this instruction file;
+- `REPOSITORY_MAP.md`;
+
+then proceed unless there is a concrete, identifiable missing implementation
+detail.
+
+Do not ask for repository context merely because it exists as an option.
 
 ## Required design behaviour
 
