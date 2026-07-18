@@ -1,40 +1,29 @@
 # Juniper SRX NETCONF Prometheus Exporter
 
 A modular Python exporter that collects operational data from Juniper SRX and
-vSRX firewalls over NETCONF and exposes the results in Prometheus format for
-Grafana dashboards and alerting.
+vSRX firewalls through NETCONF and exposes the latest values in Prometheus
+format.
 
-## Why this project exists
-
-The project provides a practical alternative to legacy SNMP polling where
-faster collection intervals, richer Junos operational data, and modern
-Prometheus/Grafana integration are required.
-
-Current goals:
-
-- collect SRX operational data through Junos NETCONF RPCs;
-- poll at configurable intervals such as 30 or 60 seconds;
-- expose numeric values as Prometheus metrics;
-- expose identity and state strings as Prometheus labels;
-- keep each Junos feature in a separate collector module;
-- remain easy to extend with additional collectors.
+The exporter is designed for SRX monitoring in standalone, virtual, and
+Multi-Node High Availability deployments. Grafana, Alertmanager, or any other
+Prometheus-compatible consumer may use the exported metrics, but dashboard
+implementation is outside this repository's core scope.
 
 ## Current collectors
 
 - System information
-- Multi-Node High Availability information
+- Multi-Node High Availability status
 - Security flow session summary
-- Routing Engine CPU, memory, load, reboot, and uptime information
-- Selected physical and logical interface statistics
+- Routing Engine statistics
+- Physical and logical interface statistics
+- Security Screen IDS counters
+- Security policy hit counters
 
-Planned collectors may include:
+The Security Screen collector supports a configurable list of zones.
 
-- SPU utilization
-- IPsec and IKE
-- NAT
-- Security policy counters
-- BGP and OSPF
-- Alarms and environmental sensors
+The security policy hit-count collector discovers every policy returned by
+Junos. Adding, deleting, or renaming an SRX policy does not require a Python
+code change.
 
 ## Project layout
 
@@ -45,39 +34,40 @@ srx-collector/
 ├── config.yaml
 ├── config.example.yaml
 ├── requirements.txt
+├── AI_COLLECTOR_INSTRUCTIONS.md
 ├── collectors/
 │   ├── system.py
 │   ├── ha.py
 │   ├── sessions.py
 │   ├── route_engine.py
-│   └── interface_statistics.py
+│   ├── interface_statistics.py
+│   ├── security_screen.py
+│   └── security_policy_hit_count.py
 ├── exporters/
 │   └── prometheus.py
 ├── lib/
 │   └── netconf.py
 ├── docs/
-├── dashboards/
-└── AI_HELP.md
+│   ├── architecture.md
+│   ├── collectors.md
+│   └── metrics.md
+└── scripts/
+    └── export_ai_collector_context.sh
 ```
 
 ## Requirements
 
 - Linux
 - Python 3.10 or newer
-- Junos NETCONF enabled on each SRX
+- NETCONF over SSH enabled on the SRX
 - TCP port 830 reachable from the exporter host
-- A Junos account with permission to execute the required operational RPCs
+- A Junos account allowed to execute the required operational RPCs
 
-## Junos configuration
-
-A basic NETCONF configuration normally includes:
+Basic Junos configuration:
 
 ```text
 set system services netconf ssh
 ```
-
-Use an account with the minimum permissions required for operational
-monitoring.
 
 ## Installation
 
@@ -92,11 +82,12 @@ pip install -r requirements.txt
 
 cp config.example.yaml config.yaml
 nano config.yaml
+chmod 600 config.yaml
 ```
 
-## Configuration
+Never commit the live `config.yaml` file.
 
-Example:
+## Configuration example
 
 ```yaml
 exporter:
@@ -106,9 +97,9 @@ exporter:
 
 devices:
   - name: R3KL4W-vFW-01
-    host: 192.168.68.98
+    host: 192.0.2.10
     port: 830
-    username: netconf
+    username: netconf-user
     password: CHANGE_ME
 
     interfaces:
@@ -116,54 +107,49 @@ devices:
       - ge-0/0/1
       - fxp0
       - st0
+
+    security_screen_zones:
+      - untrust
 ```
 
-Selecting a physical interface automatically includes its logical interfaces.
-For example, selecting `ge-0/0/0` also includes `ge-0/0/0.0` and VLAN units.
+Selecting a parent interface includes its logical units.
 
-Protect the live configuration:
+Every zone listed under `security_screen_zones` is queried independently.
 
-```bash
-chmod 600 config.yaml
+Security policies do not need to be listed. They are dynamically discovered
+through:
+
+```xml
+<get-security-policies-hit-count/>
 ```
 
-Never commit `config.yaml` to source control.
+## Run locally
 
-## Test NETCONF access
-
-The test utility reads the first device from `config.yaml`:
-
-```bash
-source venv/bin/activate
-python test_netconf.py
-```
-
-## Run the command-line collector
+Command-line collector:
 
 ```bash
 source venv/bin/activate
 python collector.py
 ```
 
-This connects to each configured device and prints the collected values.
-
-## Run the Prometheus exporter
+Prometheus exporter:
 
 ```bash
 source venv/bin/activate
 python exporter.py
 ```
 
+Verify the endpoint:
+
+```bash
+curl -s http://127.0.0.1:9105/metrics |
+grep '^srx_'
+```
+
 Default endpoint:
 
 ```text
 http://0.0.0.0:9105/metrics
-```
-
-Verify locally:
-
-```bash
-curl -s http://localhost:9105/metrics | grep '^srx_'
 ```
 
 ## Prometheus scrape configuration
@@ -176,120 +162,25 @@ scrape_configs:
           - 127.0.0.1:9105
 ```
 
-## Useful PromQL examples
+## New collector workflow
 
-CPU utilization:
+The repository includes an LLM-specific implementation guide:
 
-```promql
-100 - srx_route_engine_cpu_idle{device="192.168.68.98"}
+```text
+AI_COLLECTOR_INSTRUCTIONS.md
 ```
 
-Active sessions:
+It is intended to be pasted into ChatGPT or another LLM together with:
 
-```promql
-srx_sessions_active_sessions{device="192.168.68.98"}
+1. the Junos `| display xml` output;
+2. the Junos `| display xml rpc` output;
+3. the generated repository context.
+
+Generate the repository context with:
+
+```bash
+./scripts/export_ai_collector_context.sh
 ```
 
-Session utilization percentage:
-
-```promql
-100 *
-srx_sessions_active_sessions{device="192.168.68.98"}
-/
-srx_sessions_max_sessions{device="192.168.68.98"}
-```
-
-Uptime in complete days:
-
-```promql
-floor(
-  srx_route_engine_uptime_seconds{device="192.168.68.98"} / 86400
-)
-```
-
-For a 300-day reboot policy, suggested thresholds are:
-
-- green below 270 days;
-- yellow from 270 days;
-- red from 300 days.
-
-Interface throughput in bits per second:
-
-```promql
-8 * rate(
-  srx_interface_traffic_rx_bytes_total{
-    device="192.168.68.98",
-    interface="ge-0/0/0.0"
-  }[1m]
-)
-```
-
-Combined receive and transmit throughput:
-
-```promql
-8 * (
-  rate(
-    srx_interface_traffic_rx_bytes_total{
-      device="192.168.68.98",
-      interface="ge-0/0/0.0"
-    }[1m]
-  )
-  +
-  rate(
-    srx_interface_traffic_tx_bytes_total{
-      device="192.168.68.98",
-      interface="ge-0/0/0.0"
-    }[1m]
-  )
-)
-```
-
-MNHA role state:
-
-```promql
-srx_ha_role_state{device="192.168.68.98"}
-```
-
-Values:
-
-- `2` = Active
-- `1` = Backup or Standby
-- `0` = Down or Unknown
-
-Exporter health:
-
-```promql
-srx_exporter_up{device="192.168.68.98"}
-```
-
-## Grafana notes
-
-For Canvas panels, use separate queries for values that need different units.
-Grafana frequently names Prometheus result fields `Value`, so use distinct
-legend names such as `Cpu98`, `Sessions98`, and `UptimeDays98`.
-
-Recommended units:
-
-- CPU: Percent (0-100)
-- Sessions: None
-- Uptime in days: None
-- Byte rates converted with `8 * rate(...)`: bits per second
-- Collection duration: seconds
-
-## Documentation
-
-- [Architecture](docs/architecture.md)
-- [Adding collectors](docs/adding_collectors.md)
-- [Metric reference](docs/metrics.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [systemd service](docs/systemd-service.md)
-- [AI assistant context](AI_HELP.md)
-
-## Security
-
-See [SECURITY.md](SECURITY.md).
-
-## License
-This project is licensed under the Apache License 2.0.
-
-See the `LICENSE` file for details.
+See [Collectors](docs/collectors.md) for the human-readable collector
+inventory and [Metrics](docs/metrics.md) for exported metric conventions.

@@ -3,120 +3,69 @@
 ## Data flow
 
 ```text
-config.yaml
-    |
-    v
+Juniper SRX or vSRX
+        |
+        | NETCONF over SSH, normally TCP 830
+        v
+collectors/<feature>.py
+        |
+        | normalized Python dictionaries
+        v
+collector.py
+        |
+        | combined device metrics
+        v
 exporter.py
-    |
-    v
-NetconfClient
-    |
-    v
-collect_device_metrics()
-    |
-    +-- system
-    +-- MNHA
-    +-- sessions
-    +-- Routing Engine
-    +-- interfaces
-    |
-    v
-in-memory latest-value cache
-    |
-    v
-Prometheus /metrics endpoint
-    |
-    v
-Prometheus
-    |
-    v
-Grafana
+        |
+        | cached latest successful result
+        v
+exporters/prometheus.py
+        |
+        | Prometheus exposition format
+        v
+/metrics on TCP 9105
 ```
 
-## Collector contract
+## Responsibilities
 
-Every collector returns:
+### Collectors
 
-```python
-{
-    "name": "feature_name",
-    "metrics": {
-        "key": value,
-    },
-}
-```
+A collector owns one Junos operational feature.
 
-Collectors should focus on:
+It executes an RPC, parses its XML response, and returns normalized values.
+Collectors do not know about Prometheus queries or dashboards.
 
-- dispatching the Junos RPC;
-- parsing XML;
-- returning raw or minimally normalized values;
-- representing missing data safely.
+### `collector.py`
 
-Collectors should not:
+Imports and executes collectors for each configured device.
 
-- know about Prometheus names;
-- know about Grafana;
-- add site-specific labels;
-- contain credentials;
-- hard-code device addresses.
+Device-specific selection, such as interface lists or Screen zones, is passed
+from `config.yaml`.
 
-## Prometheus translation
+### `exporter.py`
 
-Numeric values are recursively flattened.
+Runs collection cycles, retains the latest successful metrics, exposes
+collection health, and serves the HTTP endpoint.
 
-Example collector result:
+### `exporters/prometheus.py`
 
-```python
-{
-    "name": "example",
-    "metrics": {
-        "traffic": {
-            "rx_bytes_total": 123,
-        },
-    },
-}
-```
+Converts normalized collector results to Prometheus metric families and
+labels.
 
-becomes:
+## Dynamic discovery
 
-```text
-srx_example_traffic_rx_bytes_total{device="..."} 123
-```
+Object-based collectors should iterate over all entries returned by Junos.
 
-Interface values receive both `device` and `interface` labels.
+The security policy collector is an example. It does not contain a configured
+policy list. Every policy returned by
+`get-security-policies-hit-count` becomes a labelled sample.
 
-String values are ignored by the generic numeric exporter. Features requiring
-string data must use a dedicated information metric, such as:
+This design allows newly configured policies to appear without a Python code
+change.
 
-```text
-srx_system_info{hostname="...",model="..."} 1
-```
+## Failure behaviour
 
-## Error behavior
+A failed collection must be visible through exporter health metrics.
 
-When collection succeeds:
-
-- metrics are replaced with the latest result;
-- `srx_exporter_up` becomes `1`;
-- last success time is updated.
-
-When collection fails:
-
-- the last good feature metrics are retained;
-- `srx_exporter_up` becomes `0`;
-- the collection error counter increases.
-
-Dashboards and alerts should always check `srx_exporter_up` rather than
-assuming cached feature metrics represent current device health.
-
-## Device identity
-
-The configured management address is used as the stable `device` label. This
-value is available even when system information cannot be collected.
-
-## Threading model
-
-One background thread performs sequential collection for configured devices.
-The Prometheus HTTP server reads a thread-safe snapshot of the most recent
-results.
+The exporter may retain the previous successful device values, but stale
+values must not be confused with current collection health.
