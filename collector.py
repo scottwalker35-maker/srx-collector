@@ -7,6 +7,8 @@ from collectors.ha import collect_ha
 from collectors.sessions import collect_sessions
 from collectors.route_engine import collect_route_engine
 from collectors.interface_statistics import collect_interface_statistics
+from collectors.security_screen import collect_security_screen
+from collectors.security_policy_hit_count import collect_security_policy_hit_count
 
 
 def load_config():
@@ -70,6 +72,28 @@ def collect_device_metrics(client, device):
     for collector in standard_collectors:
         result = collector(client)
         metrics[result["name"]] = result["metrics"]
+
+    security_screen_zones = device.get(
+        "security_screen_zones",
+        [],
+    )
+
+    if security_screen_zones:
+        security_screen_result = collect_security_screen(
+            client=client,
+            zones=security_screen_zones,
+        )
+        metrics[security_screen_result["name"]] = (
+            security_screen_result["metrics"]
+        )
+
+    policy_hit_count_result = collect_security_policy_hit_count(
+        client=client,
+    )
+
+    metrics[policy_hit_count_result["name"]] = (
+        policy_hit_count_result["metrics"]
+    )
 
     interface_result = collect_interface_statistics(
         client=client,

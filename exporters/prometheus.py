@@ -268,6 +268,22 @@ class SrxPrometheusCollector:
                     )
                     continue
 
+                if section_name == "security_policy_hit_count":
+                    self._collect_security_policy_hit_count_samples(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        policies=section_values,
+                    )
+                    continue
+
+                if section_name == "security_screen":
+                    self._collect_security_screen_samples(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        zones=section_values,
+                    )
+                    continue
+
                 if section_name == "interface_statistics":
                     self._collect_interface_samples(
                         metric_samples=metric_samples,
@@ -430,6 +446,58 @@ class SrxPrometheusCollector:
                 "value": 1,
             }
         )
+
+    def _collect_security_screen_samples(
+        self,
+        metric_samples,
+        device_name,
+        zones,
+    ):
+        """Export Screen counters with device and zone labels."""
+
+        for zone_name, zone_values in zones.items():
+            for path, value in _flatten_numeric_metrics(zone_values):
+                if not path:
+                    continue
+                metric_name = "srx_screen_{}".format("_".join(path))
+                self._add_sample(
+                    metric_samples=metric_samples,
+                    metric_name=metric_name,
+                    label_names=["device", "zone"],
+                    label_values=[device_name, zone_name],
+                    value=value,
+                )
+
+    def _collect_security_policy_hit_count_samples(
+        self,
+        metric_samples,
+        device_name,
+        policies,
+    ):
+        """Export one dynamically labelled sample per security policy."""
+
+        for policy_values in policies.values():
+            self._add_sample(
+                metric_samples=metric_samples,
+                metric_name="srx_security_policy_hit_count_total",
+                label_names=[
+                    "device",
+                    "logical_system",
+                    "from_zone",
+                    "to_zone",
+                    "policy",
+                    "action",
+                ],
+                label_values=[
+                    device_name,
+                    policy_values.get("logical_system", "root-logical-system"),
+                    policy_values.get("from_zone", ""),
+                    policy_values.get("to_zone", ""),
+                    policy_values.get("policy", ""),
+                    policy_values.get("action", ""),
+                ],
+                value=policy_values.get("hit_count_total", 0),
+            )
 
     def _collect_section_samples(
         self,
