@@ -98,3 +98,5 @@ Stable configured object identity belongs in labels.
 
 Unbounded traffic-derived identity, such as arbitrary source addresses or
 session IDs, must not be used as labels.
+
+- Added system_alarms collector: exports srx_system_alarm_active_count, srx_system_alarm_active, and srx_system_alarm_raised_timestamp_seconds from 'show system alarms' (get-system-alarm-information).

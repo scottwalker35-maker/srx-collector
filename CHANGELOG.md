@@ -23,3 +23,5 @@
 - Security policy hit-count collector.
 - Automatic policy discovery.
 - Prometheus labels for policy logical system, zones, name, and action.
+
+- Added system_alarms collector: exports srx_system_alarm_active_count, srx_system_alarm_active, and srx_system_alarm_raised_timestamp_seconds from 'show system alarms' (get-system-alarm-information).

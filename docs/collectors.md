@@ -119,3 +119,5 @@ Every collector module must document:
 
 Collectors must parse XML returned by NETCONF. They must not parse formatted
 CLI tables.
+
+- Added system_alarms collector: exports srx_system_alarm_active_count, srx_system_alarm_active, and srx_system_alarm_raised_timestamp_seconds from 'show system alarms' (get-system-alarm-information).

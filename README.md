@@ -184,3 +184,5 @@ Generate the repository context with:
 
 See [Collectors](docs/collectors.md) for the human-readable collector
 inventory and [Metrics](docs/metrics.md) for exported metric conventions.
+
+- Added system_alarms collector: exports srx_system_alarm_active_count, srx_system_alarm_active, and srx_system_alarm_raised_timestamp_seconds from 'show system alarms' (get-system-alarm-information).

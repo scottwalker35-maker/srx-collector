@@ -268,6 +268,14 @@ class SrxPrometheusCollector:
                     )
                     continue
 
+                if section_name == "system_alarms":
+                    self._collect_system_alarms_samples(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        alarms_section=section_values,
+                    )
+                    continue
+
                 if section_name == "security_policy_hit_count":
                     self._collect_security_policy_hit_count_samples(
                         metric_samples=metric_samples,
@@ -497,6 +505,52 @@ class SrxPrometheusCollector:
                     policy_values.get("action", ""),
                 ],
                 value=policy_values.get("hit_count_total", 0),
+            )
+
+    def _collect_system_alarms_samples(
+        self,
+        metric_samples,
+        device_name,
+        alarms_section,
+    ):
+        """Export active alarm count and one sample per active alarm."""
+
+        self._add_sample(
+            metric_samples=metric_samples,
+            metric_name="srx_system_alarm_active_count",
+            label_names=["device"],
+            label_values=[device_name],
+            value=alarms_section.get("active_alarm_count", 0),
+        )
+
+        for alarm_values in alarms_section.get("alarms", {}).values():
+            label_names = [
+                "device",
+                "alarm_class",
+                "alarm_type",
+                "alarm_short_description",
+            ]
+            label_values = [
+                device_name,
+                alarm_values.get("alarm_class", ""),
+                alarm_values.get("alarm_type", ""),
+                alarm_values.get("alarm_short_description", ""),
+            ]
+
+            self._add_sample(
+                metric_samples=metric_samples,
+                metric_name="srx_system_alarm_active",
+                label_names=label_names,
+                label_values=label_values,
+                value=alarm_values.get("active", 1),
+            )
+
+            self._add_sample(
+                metric_samples=metric_samples,
+                metric_name="srx_system_alarm_raised_timestamp_seconds",
+                label_names=label_names,
+                label_values=label_values,
+                value=alarm_values.get("raised_timestamp_seconds", 0),
             )
 
     def _collect_section_samples(
