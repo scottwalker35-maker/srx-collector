@@ -1,6 +1,30 @@
+exporter:
+  listen_address: 0.0.0.0
+  listen_port: 9105
+  collection_interval_seconds: 30
+
 devices:
-  - name: VANCBC07-vFW-01
-    host: 192.168.1.1
+  - name: R3KL4W-vFW-01
+    host: 192.168.68.98
     port: 830
     username: netconf
-    password: password
+    password: CHANGE_ME
+
+    # Selecting a physical interface includes all logical units beneath it.
+    interfaces:
+      - ge-0/0/0
+      - ge-0/0/1
+      - fxp0
+      - st0
+
+  - name: R3KL4W-vFW-02
+    host: 192.168.68.95
+    port: 830
+    username: netconf
+    password: CHANGE_ME
+
+    interfaces:
+      - ge-0/0/0
+      - ge-0/0/1
+      - fxp0
+      - st0

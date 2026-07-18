@@ -1,6 +1,30 @@
-venv/
-__pycache__/
-*.pyc
+# Live configuration and secrets
 config.yaml
-.idea/
+.env
+*.pem
+*.key
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Runtime output
+*.log
+*.pid
+nohup.out
+
+# Local backups and exports
+backups/
+*-current.txt
+*-sanitized.txt
+
+# Editors and operating systems
 .vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.backup-*

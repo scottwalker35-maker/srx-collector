@@ -28,8 +28,8 @@ Metrics:
     - cpu_interrupt
     - cpu_idle
 
-    - start_time
-    - uptime
+    - start_time_seconds
+    - uptime_seconds
     - last_reboot_reason
 
     - load_average_1
@@ -38,6 +38,25 @@ Metrics:
 """
 
 from lxml import etree
+
+
+def get_seconds_attribute(root, xpath):
+    """
+    Return the numeric Junos 'seconds' attribute from an XML element.
+
+    Junos namespace URLs contain the software release, so this intentionally
+    checks the local attribute name instead of hard-coding a namespace.
+    """
+    element = root.find(xpath)
+
+    if element is None:
+        return None
+
+    for attribute, value in element.attrib.items():
+        if attribute == "seconds" or attribute.endswith("}seconds"):
+            return value
+
+    return None
 
 
 def collect_route_engine(client):
@@ -104,11 +123,11 @@ def collect_route_engine(client):
             "cpu_idle":
                 root.findtext(".//cpu-idle"),
 
-            "start_time":
-                root.findtext(".//start-time"),
+            "start_time_seconds":
+                get_seconds_attribute(root, ".//start-time"),
 
-            "uptime":
-                root.findtext(".//up-time"),
+            "uptime_seconds":
+                get_seconds_attribute(root, ".//up-time"),
 
             "last_reboot_reason":
                 root.findtext(".//last-reboot-reason"),

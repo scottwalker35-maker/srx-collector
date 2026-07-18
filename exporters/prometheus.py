@@ -26,7 +26,10 @@ def _numeric_value(value):
     Convert supported values to a finite float.
 
     Strings such as timestamps, interface states, versions and descriptions
-    are intentionally ignored by this first exporter version.
+    are intentionally ignored by the generic numeric exporter.
+
+    Collectors requiring string labels, such as system information, are
+    handled separately.
     """
 
     if value is None or isinstance(value, bool):
@@ -34,6 +37,7 @@ def _numeric_value(value):
 
     if isinstance(value, Number):
         number = float(value)
+
     elif isinstance(value, str):
         value = value.strip()
 
@@ -44,6 +48,7 @@ def _numeric_value(value):
             number = float(value)
         except ValueError:
             return None
+
     else:
         return None
 
@@ -51,6 +56,17 @@ def _numeric_value(value):
         return None
 
     return number
+
+
+def _label_value(value):
+    """
+    Convert a collector value into a safe Prometheus label value.
+    """
+
+    if value is None:
+        return ""
+
+    return str(value).strip()
 
 
 def _flatten_numeric_metrics(value, path=()):
@@ -76,6 +92,7 @@ def _flatten_numeric_metrics(value, path=()):
                 child_value,
                 path + (_sanitize_metric_name(key),),
             )
+
         return
 
     number = _numeric_value(value)
@@ -235,6 +252,22 @@ class SrxPrometheusCollector:
 
             for section_name, section_values in metrics.items():
 
+                if section_name == "system":
+                    self._collect_system_info(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        system_values=section_values,
+                    )
+                    continue
+
+                if section_name == "ha":
+                    self._collect_ha_info(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        ha_values=section_values,
+                    )
+                    continue
+
                 if section_name == "interface_statistics":
                     self._collect_interface_samples(
                         metric_samples=metric_samples,
@@ -266,6 +299,137 @@ class SrxPrometheusCollector:
                 )
 
             yield family
+
+    def _collect_ha_info(
+        self,
+        metric_samples,
+        device_name,
+        ha_values,
+    ):
+        """
+        Export MNHA state as both labels and a numeric role value.
+
+        Role-state values:
+            2 = ACTIVE
+            1 = BACKUP or STANDBY
+            0 = DOWN, FAILED, OFFLINE or unknown
+        """
+
+        info_metric_name = "srx_ha_info"
+
+        if info_metric_name not in metric_samples:
+            metric_samples[info_metric_name] = {
+                "description": (
+                    "Juniper SRX Multi-Node High Availability information."
+                ),
+                "label_names": [
+                    "device",
+                    "node_status",
+                    "role",
+                    "peer_role",
+                    "health",
+                    "readiness",
+                    "peer_bfd",
+                ],
+                "samples": [],
+            }
+
+        metric_samples[info_metric_name]["samples"].append(
+            {
+                "label_values": [
+                    device_name,
+                    _label_value(ha_values.get("node_status")),
+                    _label_value(ha_values.get("role")),
+                    _label_value(ha_values.get("peer_role")),
+                    _label_value(ha_values.get("health")),
+                    _label_value(ha_values.get("readiness")),
+                    _label_value(ha_values.get("peer_bfd")),
+                ],
+                "value": 1,
+            }
+        )
+
+        role = _label_value(
+            ha_values.get("role")
+        ).upper()
+
+        node_status = _label_value(
+            ha_values.get("node_status")
+        ).upper()
+
+        if node_status not in {"ONLINE", "UP"}:
+            role_state = 0
+        elif role == "ACTIVE":
+            role_state = 2
+        elif role in {"BACKUP", "STANDBY"}:
+            role_state = 1
+        else:
+            role_state = 0
+
+        role_metric_name = "srx_ha_role_state"
+
+        if role_metric_name not in metric_samples:
+            metric_samples[role_metric_name] = {
+                "description": (
+                    "MNHA role state: 2 active, 1 backup or standby, "
+                    "0 down or unknown."
+                ),
+                "label_names": ["device"],
+                "samples": [],
+            }
+
+        metric_samples[role_metric_name]["samples"].append(
+            {
+                "label_values": [device_name],
+                "value": role_state,
+            }
+        )
+
+    def _collect_system_info(
+        self,
+        metric_samples,
+        device_name,
+        system_values,
+    ):
+        """
+        Export static Juniper system information as Prometheus labels.
+
+        Prometheus does not store arbitrary string metric values. Static
+        identity information is therefore exported as labels on a gauge
+        whose value is always 1.
+        """
+
+        metric_name = "srx_system_info"
+
+        if metric_name not in metric_samples:
+            metric_samples[metric_name] = {
+                "description": (
+                    "Static system information reported by the Juniper SRX."
+                ),
+                "label_names": [
+                    "device",
+                    "hostname",
+                    "model",
+                    "family",
+                    "junos_version",
+                    "serial_number",
+                ],
+                "samples": [],
+            }
+
+        metric_samples[metric_name]["samples"].append(
+            {
+                "label_values": [
+                    _label_value(device_name),
+                    _label_value(system_values.get("hostname")),
+                    _label_value(system_values.get("model")),
+                    _label_value(system_values.get("family")),
+                    _label_value(system_values.get("version")),
+                    _label_value(system_values.get("serial")),
+                ],
+                "value": 1,
+            }
+        )
 
     def _collect_section_samples(
         self,
@@ -315,20 +479,9 @@ class SrxPrometheusCollector:
                 if not path:
                     continue
 
-                if path[0] in {
-                    "snmp_index",
-                    "local_index",
-                    "admin_up",
-                    "oper_up",
-                    "mtu",
-                }:
-                    metric_name = "srx_interface_{}".format(
-                        "_".join(path)
-                    )
-                else:
-                    metric_name = "srx_interface_{}".format(
-                        "_".join(path)
-                    )
+                metric_name = "srx_interface_{}".format(
+                    "_".join(path)
+                )
 
                 self._add_sample(
                     metric_samples=metric_samples,
