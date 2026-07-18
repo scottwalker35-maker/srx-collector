@@ -105,3 +105,17 @@ Policy names, source zones, destination zones, logical systems, and actions
 are not hardcoded.
 
 A newly configured policy appears on the next successful collection cycle.
+
+## Collector documentation standard
+
+Every collector module must document:
+
+- the Junos operational command;
+- the corresponding `display xml rpc` request;
+- the repeating XML entry path, when applicable;
+- whether values are counters, gauges, or states;
+- whether returned objects are dynamically discovered;
+- any configuration values passed to the collector.
+
+Collectors must parse XML returned by NETCONF. They must not parse formatted
+CLI tables.

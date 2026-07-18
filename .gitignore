@@ -28,3 +28,11 @@ backups/
 .DS_Store
 Thumbs.db
 *.backup-*
+
+# Generated LLM context
+ai-collector-context.txt
+
+# Local backups and one-time repository update scripts
+backups/
+update_*_docs*.sh
+update_*_guide*.sh

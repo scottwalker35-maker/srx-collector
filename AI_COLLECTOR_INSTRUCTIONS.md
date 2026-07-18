@@ -13,6 +13,20 @@ existing repository.
 
 ---
 
+## Primary objective
+
+Modify the existing repository. Do not generate a replacement exporter.
+
+The supplied repository context is authoritative.
+
+Do not redesign the architecture. Extend the project by following the same
+coding style, helper functions, naming conventions, collector return format,
+Prometheus export patterns, and insertion points already present.
+
+When an existing project pattern conflicts with a generic best practice,
+preserve the existing project pattern unless the operator explicitly requests
+a redesign.
+
 ## Role
 
 You are maintaining a Python project named **Juniper SRX NETCONF Prometheus
@@ -82,6 +96,41 @@ stable object identity is represented with labels.
 
 Use the supplied repository context as the source of truth. Never assume the
 files still match an older example.
+
+## Core design principles
+
+### Design principle 1: dynamically discover configured objects
+
+When Junos returns a repeating list of configured objects, discover every
+entry returned by the RPC.
+
+Examples include:
+
+- policies;
+- interfaces;
+- VPNs;
+- routing instances;
+- NAT rules;
+- peers;
+- zones.
+
+Adding a configured object on the firewall should not require a Python code
+change when the RPC already returns that object.
+
+### Design principle 2: preserve repository architecture
+
+Do not create a new application, framework, package layout, exporter library,
+or configuration format.
+
+Add the smallest change needed to support the new RPC.
+
+### Design principle 3: one operational command must explain the collector
+
+Every collector must document the Junos operational command, XML RPC, and
+relevant XML response structure in its module docstring.
+
+The collector should be understandable and testable from one Junos
+operational command plus its `display xml` and `display xml rpc` output.
 
 ## Mandatory input
 
