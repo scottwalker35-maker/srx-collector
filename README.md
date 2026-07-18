@@ -290,6 +290,6 @@ Recommended units:
 See [SECURITY.md](SECURITY.md).
 
 ## License
+This project is licensed under the Apache License 2.0.
 
-No license has been selected yet. Add a `LICENSE` file before public
-distribution.
+See the `LICENSE` file for details.
