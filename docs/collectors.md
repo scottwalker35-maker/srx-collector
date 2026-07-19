@@ -121,3 +121,38 @@ Collectors must parse XML returned by NETCONF. They must not parse formatted
 CLI tables.
 
 - Added system_alarms collector: exports srx_system_alarm_active_count, srx_system_alarm_active, and srx_system_alarm_raised_timestamp_seconds from 'show system alarms' (get-system-alarm-information).
+
+## IKE security associations
+
+- Collector: `collectors/ike_security_associations.py`
+- CLI: `show security ike security-associations`
+- RPC: `<get-ike-security-associations-information/>`
+- Discovery: every returned `ike-security-associations` entry.
+
+## IKE security-association detail
+
+Collector: `collectors/ike_security_associations_detail.py`
+
+The summary RPC discovers every current IKE index. The detail collector then
+runs `get-ike-security-associations-information` with `detail` and
+`show-index-ike-security-association` for each index.
+
+## IPsec security associations
+
+Collector: `collectors/ipsec_security_associations.py`
+
+RPC:
+
+```xml
+<get-security-associations-information/>
+```
+
+The collector dynamically discovers each returned tunnel index and records its
+remote gateway, direction, SPI, algorithms, lifetime, and port.
+
+## IPsec security-association detail
+
+Collector: `collectors/ipsec_security_associations_detail.py`
+
+The summary RPC discovers current tunnel indices. The detail RPC is then run
+once for each index and returns tunnel-level and inbound/outbound SA data.

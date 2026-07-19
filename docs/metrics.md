@@ -100,3 +100,35 @@ Unbounded traffic-derived identity, such as arbitrary source addresses or
 session IDs, must not be used as labels.
 
 - Added system_alarms collector: exports srx_system_alarm_active_count, srx_system_alarm_active, and srx_system_alarm_raised_timestamp_seconds from 'show system alarms' (get-system-alarm-information).
+
+## IKE security-association metrics
+
+- `srx_ike_sa_total`
+- `srx_ike_sa_up_total`
+- `srx_ike_sa_down_total`
+- `srx_ike_sa_up`
+- `srx_ike_sa_info`
+
+## Detailed IKE security-association metrics
+
+Metrics use the `srx_ike_detail_` prefix. They include per-firewall discovery
+and query totals, current SA state, remaining lifetime, packet and byte
+counters, IPsec SA counts, Phase 2 counts, rekeys, associated tunnel counts,
+and an information metric for negotiated algorithms and identities.
+
+## IPsec security-association metrics
+
+- `srx_ipsec_sa_total`
+- `srx_ipsec_sa_present`
+- `srx_ipsec_sa_remaining_lifetime_seconds`
+- `srx_ipsec_sa_info`
+
+Per-SA labels include `device`, `firewall`, `tunnel_index`, `remote_gateway`,
+and `direction`.
+
+## Detailed IPsec security-association metrics
+
+Metrics use the `srx_ipsec_detail_` prefix. They include discovery and query
+health, tunnel state and identity, negotiation statistics, event information,
+and directional SA state, lifetimes, algorithms, SPI, replay settings, and IKE
+index correlation.

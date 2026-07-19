@@ -300,6 +300,50 @@ class SrxPrometheusCollector:
                     )
                     continue
 
+                if section_name == "ipsec_security_associations_detail":
+                    self._collect_ipsec_security_association_detail_samples(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        firewall_name=_label_value(
+                            metrics.get("system", {}).get("hostname")
+                        ),
+                        ipsec_values=section_values,
+                    )
+                    continue
+
+                if section_name == "ipsec_security_associations":
+                    self._collect_ipsec_security_association_samples(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        firewall_name=_label_value(
+                            metrics.get("system", {}).get("hostname")
+                        ),
+                        ipsec_values=section_values,
+                    )
+                    continue
+
+                if section_name == "ike_security_associations_detail":
+                    self._collect_ike_security_association_detail_samples(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        firewall_name=_label_value(
+                            metrics.get("system", {}).get("hostname")
+                        ),
+                        ike_values=section_values,
+                    )
+                    continue
+
+                if section_name == "ike_security_associations":
+                    self._collect_ike_security_association_samples(
+                        metric_samples=metric_samples,
+                        device_name=device_name,
+                        firewall_name=_label_value(
+                            metrics.get("system", {}).get("hostname")
+                        ),
+                        ike_values=section_values,
+                    )
+                    continue
+
                 self._collect_section_samples(
                     metric_samples=metric_samples,
                     device_name=device_name,
@@ -323,6 +367,567 @@ class SrxPrometheusCollector:
                 )
 
             yield family
+
+    def _collect_ipsec_security_association_detail_samples(
+        self,
+        metric_samples,
+        device_name,
+        firewall_name,
+        ipsec_values,
+    ):
+        """Export detailed data for every dynamically discovered IPsec tunnel."""
+
+        summary_metrics = {
+            "srx_ipsec_detail_discovered_total": (
+                "Number of IPsec tunnel indices discovered by the summary RPC.",
+                ipsec_values.get("discovered_total"),
+            ),
+            "srx_ipsec_detail_collected_total": (
+                "Number of IPsec tunnel detail records collected successfully.",
+                ipsec_values.get("collected_total"),
+            ),
+            "srx_ipsec_detail_query_failures_total": (
+                "Number of per-index IPsec detail RPC failures in the latest cycle.",
+                ipsec_values.get("query_failures_total"),
+            ),
+        }
+
+        for metric_name, (description, raw_value) in summary_metrics.items():
+            number = _numeric_value(raw_value)
+            if number is None:
+                continue
+            if metric_name not in metric_samples:
+                metric_samples[metric_name] = {
+                    "description": description,
+                    "label_names": ["device", "firewall"],
+                    "samples": [],
+                }
+            metric_samples[metric_name]["samples"].append({
+                "label_values": [device_name, firewall_name],
+                "value": number,
+            })
+
+        tunnels = ipsec_values.get("tunnels", {})
+        tunnel_label_names = [
+            "device",
+            "firewall",
+            "tunnel_index",
+            "vpn",
+            "remote_gateway",
+            "bind_interface",
+            "logical_system",
+        ]
+
+        tunnel_numeric_metrics = {
+            "srx_ipsec_detail_up": ("Whether the IPsec tunnel block is up.", "up"),
+            "srx_ipsec_detail_negotiations_total": ("IPsec negotiations recorded for the tunnel.", "negotiations_total"),
+            "srx_ipsec_detail_negotiation_failures_total": ("Failed IPsec negotiations recorded for the tunnel.", "negotiation_failures_total"),
+            "srx_ipsec_detail_deletions_total": ("IPsec deletions recorded for the tunnel.", "deletions_total"),
+            "srx_ipsec_detail_event_count": ("Number of event records returned for the tunnel.", "event_count"),
+            "srx_ipsec_detail_last_event_repeat_count": ("Repeat count for the newest returned tunnel event.", "last_event_repeat_count"),
+        }
+
+        direction_numeric_metrics = {
+            "srx_ipsec_detail_sa_installed": ("Whether the directional IPsec SA is installed.", "installed"),
+            "srx_ipsec_detail_sa_hard_lifetime_seconds": ("Remaining hard lifetime for the directional SA.", "hard_lifetime_seconds"),
+            "srx_ipsec_detail_sa_soft_lifetime_seconds": ("Remaining soft lifetime for the directional SA.", "soft_lifetime_seconds"),
+            "srx_ipsec_detail_sa_replay_window_size": ("Replay-window size for the directional SA.", "replay_window_size"),
+        }
+
+        for tunnel_index in sorted(
+            tunnels,
+            key=lambda value: int(value) if str(value).isdigit() else str(value),
+        ):
+            tunnel = tunnels[tunnel_index]
+            tunnel_labels = [
+                device_name,
+                firewall_name,
+                _label_value(tunnel.get("tunnel_index")),
+                _label_value(tunnel.get("vpn_name")),
+                _label_value(tunnel.get("remote_gateway")),
+                _label_value(tunnel.get("bind_interface")),
+                _label_value(tunnel.get("logical_system")),
+            ]
+
+            for metric_name, (description, field_name) in tunnel_numeric_metrics.items():
+                number = _numeric_value(tunnel.get(field_name))
+                if number is None:
+                    continue
+                if metric_name not in metric_samples:
+                    metric_samples[metric_name] = {
+                        "description": description,
+                        "label_names": tunnel_label_names,
+                        "samples": [],
+                    }
+                metric_samples[metric_name]["samples"].append({
+                    "label_values": tunnel_labels,
+                    "value": number,
+                })
+
+            info_name = "srx_ipsec_detail_info"
+            if info_name not in metric_samples:
+                metric_samples[info_name] = {
+                    "description": "Detailed IPsec tunnel identity, policy, and negotiated settings.",
+                    "label_names": tunnel_label_names + [
+                        "state", "local_gateway", "local_identity", "remote_identity",
+                        "traffic_selector_type", "ike_version", "pfs_group",
+                        "policy", "quantum_secured", "df_bit", "copy_outer_dscp",
+                        "passive_mode_tunneling", "distribution_key",
+                        "last_event_time", "last_event_description",
+                    ],
+                    "samples": [],
+                }
+            metric_samples[info_name]["samples"].append({
+                "label_values": tunnel_labels + [
+                    _label_value(tunnel.get("block_state")),
+                    _label_value(tunnel.get("local_gateway")),
+                    _label_value(tunnel.get("local_identity")),
+                    _label_value(tunnel.get("remote_identity")),
+                    _label_value(tunnel.get("traffic_selector_type")),
+                    _label_value(tunnel.get("ike_version")),
+                    _label_value(tunnel.get("pfs_group")),
+                    _label_value(tunnel.get("policy_name")),
+                    _label_value(tunnel.get("quantum_secured")),
+                    _label_value(tunnel.get("df_bit")),
+                    _label_value(tunnel.get("copy_outer_dscp")),
+                    _label_value(tunnel.get("passive_mode_tunneling")),
+                    _label_value(tunnel.get("distribution_key")),
+                    _label_value(tunnel.get("last_event_time")),
+                    _label_value(tunnel.get("last_event_description")),
+                ],
+                "value": 1,
+            })
+
+            for direction, sa in tunnel.get("directions", {}).items():
+                direction_label_names = tunnel_label_names + [
+                    "direction", "spi", "ike_index", "protocol",
+                ]
+                direction_labels = tunnel_labels + [
+                    _label_value(direction),
+                    _label_value(sa.get("spi")),
+                    _label_value(sa.get("ike_index")),
+                    _label_value(sa.get("protocol")),
+                ]
+
+                for metric_name, (description, field_name) in direction_numeric_metrics.items():
+                    number = _numeric_value(sa.get(field_name))
+                    if number is None:
+                        continue
+                    if metric_name not in metric_samples:
+                        metric_samples[metric_name] = {
+                            "description": description,
+                            "label_names": direction_label_names,
+                            "samples": [],
+                        }
+                    metric_samples[metric_name]["samples"].append({
+                        "label_values": direction_labels,
+                        "value": number,
+                    })
+
+                sa_info_name = "srx_ipsec_detail_sa_info"
+                if sa_info_name not in metric_samples:
+                    metric_samples[sa_info_name] = {
+                        "description": "Directional IPsec SA algorithms, replay settings, and state.",
+                        "label_names": direction_label_names + [
+                            "state", "encryption_algorithm", "authentication_algorithm",
+                            "hmac_algorithm", "esp_encryption_algorithm", "mode", "type",
+                            "anti_replay_service", "extended_sequence_number",
+                            "tunnel_establishment", "monitoring_state", "lifesize_remaining",
+                        ],
+                        "samples": [],
+                    }
+                metric_samples[sa_info_name]["samples"].append({
+                    "label_values": direction_labels + [
+                        _label_value(sa.get("state")),
+                        _label_value(sa.get("encryption_algorithm")),
+                        _label_value(sa.get("authentication_algorithm")),
+                        _label_value(sa.get("hmac_algorithm")),
+                        _label_value(sa.get("esp_encryption_algorithm")),
+                        _label_value(sa.get("mode")),
+                        _label_value(sa.get("type")),
+                        _label_value(sa.get("anti_replay_service")),
+                        _label_value(sa.get("extended_sequence_number")),
+                        _label_value(sa.get("tunnel_establishment")),
+                        _label_value(sa.get("monitoring_state")),
+                        _label_value(sa.get("lifesize_remaining")),
+                    ],
+                    "value": 1,
+                })
+
+    def _collect_ipsec_security_association_samples(
+        self,
+        metric_samples,
+        device_name,
+        firewall_name,
+        ipsec_values,
+    ):
+        """Export dynamically discovered IPsec security associations."""
+
+        total_value = _numeric_value(ipsec_values.get("sa_total"))
+
+        if total_value is not None:
+            metric_name = "srx_ipsec_sa_total"
+            metric_samples.setdefault(
+                metric_name,
+                {
+                    "description": (
+                        "Number of IPsec security associations currently "
+                        "returned by the firewall."
+                    ),
+                    "label_names": ["device", "firewall"],
+                    "samples": [],
+                },
+            )
+            metric_samples[metric_name]["samples"].append(
+                {
+                    "label_values": [device_name, firewall_name],
+                    "value": total_value,
+                }
+            )
+
+        associations = ipsec_values.get("associations", {})
+        base_label_names = [
+            "device",
+            "firewall",
+            "tunnel_index",
+            "remote_gateway",
+            "direction",
+        ]
+
+        numeric_metrics = {
+            "srx_ipsec_sa_present": (
+                "Whether the IPsec SA entry is currently present.",
+                "present",
+            ),
+            "srx_ipsec_sa_remaining_lifetime_seconds": (
+                "Remaining IPsec SA lifetime in seconds.",
+                "remaining_lifetime_seconds",
+            ),
+        }
+
+        for tunnel_index in sorted(
+            associations,
+            key=lambda value: int(value) if str(value).isdigit() else str(value),
+        ):
+            association = associations[tunnel_index]
+            base_label_values = [
+                device_name,
+                firewall_name,
+                _label_value(association.get("tunnel_index")),
+                _label_value(association.get("remote_gateway")),
+                _label_value(association.get("direction")),
+            ]
+
+            for metric_name, (description, field_name) in numeric_metrics.items():
+                number = _numeric_value(association.get(field_name))
+                if number is None:
+                    continue
+
+                metric_samples.setdefault(
+                    metric_name,
+                    {
+                        "description": description,
+                        "label_names": base_label_names,
+                        "samples": [],
+                    },
+                )
+                metric_samples[metric_name]["samples"].append(
+                    {
+                        "label_values": base_label_values,
+                        "value": number,
+                    }
+                )
+
+            info_metric_name = "srx_ipsec_sa_info"
+            metric_samples.setdefault(
+                info_metric_name,
+                {
+                    "description": (
+                        "Current IPsec SA identity and negotiated settings."
+                    ),
+                    "label_names": base_label_names + [
+                        "spi",
+                        "encryption_algorithm",
+                        "authentication_algorithm",
+                        "port",
+                    ],
+                    "samples": [],
+                },
+            )
+            metric_samples[info_metric_name]["samples"].append(
+                {
+                    "label_values": base_label_values + [
+                        _label_value(association.get("spi")),
+                        _label_value(association.get("encryption_algorithm")),
+                        _label_value(association.get("authentication_algorithm")),
+                        _label_value(association.get("port")),
+                    ],
+                    "value": 1,
+                }
+            )
+
+    def _collect_ike_security_association_detail_samples(
+        self,
+        metric_samples,
+        device_name,
+        firewall_name,
+        ike_values,
+    ):
+        """Export detailed data for every dynamically discovered IKE SA."""
+
+        summary_metrics = {
+            "srx_ike_detail_discovered_total": (
+                "Number of IKE indices discovered by the summary RPC.",
+                ike_values.get("discovered_total"),
+            ),
+            "srx_ike_detail_collected_total": (
+                "Number of IKE detail records collected successfully.",
+                ike_values.get("collected_total"),
+            ),
+            "srx_ike_detail_query_failures_total": (
+                "Number of per-index IKE detail RPC failures in the latest collection cycle.",
+                ike_values.get("query_failures_total"),
+            ),
+        }
+
+        for metric_name, (description, raw_value) in summary_metrics.items():
+            number = _numeric_value(raw_value)
+            if number is None:
+                continue
+            if metric_name not in metric_samples:
+                metric_samples[metric_name] = {
+                    "description": description,
+                    "label_names": ["device", "firewall"],
+                    "samples": [],
+                }
+            metric_samples[metric_name]["samples"].append(
+                {
+                    "label_values": [device_name, firewall_name],
+                    "value": number,
+                }
+            )
+
+        associations = ike_values.get("associations", {})
+        stable_label_names = [
+            "device",
+            "firewall",
+            "ike_index",
+            "gateway",
+            "local_address",
+            "remote_address",
+            "ike_version",
+            "exchange_type",
+        ]
+
+        numeric_metrics = {
+            "srx_ike_detail_up": (
+                "Whether the detailed IKE SA is currently in UP state.",
+                "up",
+            ),
+            "srx_ike_detail_remaining_lifetime_seconds": (
+                "Remaining IKE SA lifetime in seconds.",
+                "remaining_lifetime_seconds",
+            ),
+            "srx_ike_detail_packets_in_total": (
+                "Packets received by the IKE SA.",
+                "packets_in",
+            ),
+            "srx_ike_detail_packets_out_total": (
+                "Packets sent by the IKE SA.",
+                "packets_out",
+            ),
+            "srx_ike_detail_bytes_in_total": (
+                "Bytes received by the IKE SA.",
+                "bytes_in",
+            ),
+            "srx_ike_detail_bytes_out_total": (
+                "Bytes sent by the IKE SA.",
+                "bytes_out",
+            ),
+            "srx_ike_detail_ipsec_sa_created_total": (
+                "IPsec SAs created through the IKE SA.",
+                "ipsec_sa_created",
+            ),
+            "srx_ike_detail_ipsec_sa_deleted_total": (
+                "IPsec SAs deleted through the IKE SA.",
+                "ipsec_sa_deleted",
+            ),
+            "srx_ike_detail_phase2_negotiations_total": (
+                "Phase 2 negotiations recorded for the IKE SA.",
+                "phase2_negotiations",
+            ),
+            "srx_ike_detail_phase2_failures_total": (
+                "Failed Phase 2 negotiations recorded for the IKE SA.",
+                "phase2_failures",
+            ),
+            "srx_ike_detail_rekeys_total": (
+                "Rekeys recorded for the IKE SA.",
+                "rekey_count",
+            ),
+            "srx_ike_detail_associated_tunnels": (
+                "Number of associated IPsec tunnel identifiers.",
+                "associated_tunnel_count",
+            ),
+        }
+
+        for ike_index in sorted(
+            associations,
+            key=lambda value: int(value) if str(value).isdigit() else str(value),
+        ):
+            association = associations[ike_index]
+            stable_label_values = [
+                device_name,
+                firewall_name,
+                _label_value(association.get("ike_index")),
+                _label_value(association.get("gateway")),
+                _label_value(association.get("local_address")),
+                _label_value(association.get("remote_address")),
+                _label_value(association.get("ike_version")),
+                _label_value(association.get("exchange_type")),
+            ]
+
+            for metric_name, (description, field_name) in numeric_metrics.items():
+                number = _numeric_value(association.get(field_name))
+                if number is None:
+                    continue
+                if metric_name not in metric_samples:
+                    metric_samples[metric_name] = {
+                        "description": description,
+                        "label_names": stable_label_names,
+                        "samples": [],
+                    }
+                metric_samples[metric_name]["samples"].append(
+                    {
+                        "label_values": stable_label_values,
+                        "value": number,
+                    }
+                )
+
+            info_metric_name = "srx_ike_detail_info"
+            if info_metric_name not in metric_samples:
+                metric_samples[info_metric_name] = {
+                    "description": "Detailed IKE SA identity and negotiated settings.",
+                    "label_names": stable_label_names + [
+                        "state",
+                        "authentication_method",
+                        "encryption_algorithm",
+                        "authentication_algorithm",
+                        "prf_algorithm",
+                        "dh_group",
+                        "associated_tunnel_ids",
+                    ],
+                    "samples": [],
+                }
+            metric_samples[info_metric_name]["samples"].append(
+                {
+                    "label_values": stable_label_values + [
+                        _label_value(association.get("state")),
+                        _label_value(association.get("authentication_method")),
+                        _label_value(association.get("encryption_algorithm")),
+                        _label_value(association.get("authentication_algorithm")),
+                        _label_value(association.get("prf_algorithm")),
+                        _label_value(association.get("dh_group")),
+                        _label_value(association.get("associated_tunnel_ids")),
+                    ],
+                    "value": 1,
+                }
+            )
+
+    def _collect_ike_security_association_samples(
+        self,
+        metric_samples,
+        device_name,
+        firewall_name,
+        ike_values,
+    ):
+        """Export IKE SA totals and per-SA state."""
+
+        summaries = {
+            "srx_ike_sa_total": (
+                "Current number of IKE security associations.",
+                ike_values.get("sa_total"),
+            ),
+            "srx_ike_sa_up_total": (
+                "Current number of IKE security associations in UP state.",
+                ike_values.get("sa_up_total"),
+            ),
+            "srx_ike_sa_down_total": (
+                "Current number of IKE security associations not UP.",
+                ike_values.get("sa_down_total"),
+            ),
+        }
+
+        for metric_name, (description, raw_value) in summaries.items():
+            value = _numeric_value(raw_value)
+            if value is None:
+                continue
+            metric_samples.setdefault(
+                metric_name,
+                {
+                    "description": description,
+                    "label_names": ["device", "firewall"],
+                    "samples": [],
+                },
+            )["samples"].append(
+                {
+                    "label_values": [device_name, firewall_name],
+                    "value": value,
+                }
+            )
+
+        associations = ike_values.get("associations", {})
+        for ike_index in sorted(associations, key=str):
+            association = associations[ike_index]
+            base_labels = [
+                device_name,
+                firewall_name,
+                _label_value(association.get("ike_index")),
+                _label_value(association.get("remote_address")),
+                _label_value(association.get("exchange_type")),
+            ]
+
+            metric_samples.setdefault(
+                "srx_ike_sa_up",
+                {
+                    "description": "Whether the IKE SA is UP.",
+                    "label_names": [
+                        "device",
+                        "firewall",
+                        "ike_index",
+                        "remote_address",
+                        "exchange_type",
+                    ],
+                    "samples": [],
+                },
+            )["samples"].append(
+                {
+                    "label_values": base_labels,
+                    "value": _numeric_value(association.get("up")),
+                }
+            )
+
+            metric_samples.setdefault(
+                "srx_ike_sa_info",
+                {
+                    "description": "IKE SA identity and raw state.",
+                    "label_names": [
+                        "device",
+                        "firewall",
+                        "ike_index",
+                        "remote_address",
+                        "exchange_type",
+                        "state",
+                    ],
+                    "samples": [],
+                },
+            )["samples"].append(
+                {
+                    "label_values": base_labels + [
+                        _label_value(association.get("state"))
+                    ],
+                    "value": 1,
+                }
+            )
 
     def _collect_ha_info(
         self,

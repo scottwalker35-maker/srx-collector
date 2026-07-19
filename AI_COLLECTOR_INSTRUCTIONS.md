@@ -93,6 +93,10 @@ stable object identity is represented with labels.
 - `collectors/interface_statistics.py`
 - `collectors/security_screen.py`
 - `collectors/security_policy_hit_count.py`
+- `collectors/ike_security_associations.py`
+- `collectors/ike_security_associations_detail.py`
+- `collectors/ipsec_security_associations.py`
+- `collectors/ipsec_security_associations_detail.py`
 
 Use the supplied repository context as the source of truth. Never assume the
 files still match an older example.

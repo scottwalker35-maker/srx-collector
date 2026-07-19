@@ -1,0 +1,32 @@
+[Unit]
+Description=Juniper SRX NETCONF Prometheus Exporter
+Documentation=https://github.com/<your-github-account>/srx-collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+User=walkersc
+Group=walkersc
+
+WorkingDirectory=/home/walkersc/srx-collector
+
+Environment="PYTHONUNBUFFERED=1"
+
+ExecStart=/home/walkersc/srx-collector/venv/bin/python /home/walkersc/srx-collector/exporter.py
+
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+
+# Basic hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target

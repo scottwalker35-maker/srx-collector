@@ -186,3 +186,40 @@ See [Collectors](docs/collectors.md) for the human-readable collector
 inventory and [Metrics](docs/metrics.md) for exported metric conventions.
 
 - Added system_alarms collector: exports srx_system_alarm_active_count, srx_system_alarm_active, and srx_system_alarm_raised_timestamp_seconds from 'show system alarms' (get-system-alarm-information).
+
+### IKE security associations
+
+The exporter dynamically collects all entries returned by
+`show security ike security-associations`. Metrics include both the NETCONF
+device and Junos firewall hostname.
+
+### IKE security-association detail
+
+The exporter dynamically discovers current IKE indices and collects each
+association with:
+
+```text
+show security ike security-associations detail index <index>
+```
+
+Every metric includes the configured NETCONF `device`, Junos `firewall`
+hostname, and current `ike_index`.
+
+### IPsec security associations
+
+The exporter dynamically collects every entry returned by:
+
+```text
+show security ipsec security-associations
+```
+
+Every metric includes the configured NETCONF `device` and Junos `firewall`
+hostname. Tunnel indices are retained for current-state correlation and later
+detail collection.
+
+### IPsec security-association detail
+
+The exporter dynamically discovers current IPsec tunnel indices and collects
+each tunnel with `show security ipsec security-associations detail index
+<index>`. Metrics are linked to the NETCONF device, Junos hostname, tunnel
+index, VPN name, remote gateway, and bind interface.

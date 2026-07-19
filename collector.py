@@ -7,6 +7,10 @@ from collectors.ha import collect_ha
 from collectors.sessions import collect_sessions
 from collectors.route_engine import collect_route_engine
 from collectors.interface_statistics import collect_interface_statistics
+from collectors.ike_security_associations import collect_ike_security_associations
+from collectors.ike_security_associations_detail import collect_ike_security_associations_detail
+from collectors.ipsec_security_associations import collect_ipsec_security_associations
+from collectors.ipsec_security_associations_detail import collect_ipsec_security_associations_detail
 from collectors.security_screen import collect_security_screen
 from collectors.security_policy_hit_count import collect_security_policy_hit_count
 from collectors.system_alarms import collect_system_alarms
@@ -68,6 +72,10 @@ def collect_device_metrics(client, device):
         collect_ha,
         collect_sessions,
         collect_route_engine,
+        collect_ike_security_associations,
+        collect_ike_security_associations_detail,
+        collect_ipsec_security_associations,
+        collect_ipsec_security_associations_detail,
         collect_system_alarms,
     )
 
