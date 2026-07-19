@@ -20,7 +20,9 @@ def collect_ha(client):
             "role": root.findtext(".//node-role"),
             "peer_role": root.findtext(".//peer-node-role"),
             "health": root.findtext(".//health-status"),
-            "readiness": root.findtext(".//failover-readiness"),
+            "failover_readiness": root.findtext(".//failover-readiness"),
+            "control_plane_state": root.findtext(".//control-plane-state"),
+            "cold_sync_status": root.findtext(".//cold-sync-status"),
             "peer_bfd": root.findtext(".//high-availability-peer-bfd-status"),
         },
     }
